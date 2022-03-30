@@ -1,0 +1,111 @@
+private static string DecodeTamperProofString(string encryptedValue)
+        {
+            // Decrypting the password
+            string decrTamperProofKey = ConfigurationSettings.AppSettings["TmsToSmsTamperProofKey"].ToString().Trim();
+            string decryptedPassword = "";
+            string calculateHast = "";
+            string storedHash = "";
+
+            using (MACTripleDES macTripleDES = new MACTripleDES())
+            {
+                using (MD5CryptoServiceProvider md5CryptoServiceProvider = new MD5CryptoServiceProvider())
+                {
+                    macTripleDES.Key = md5CryptoServiceProvider.ComputeHash(Encoding.UTF8.GetBytes(decrTamperProofKey));
+
+                    try
+                    {
+                        decryptedPassword = Encoding.UTF8.GetString(Convert.FromBase64String(encryptedValue.Split('-')[0]));
+                        storedHash = Encoding.UTF8.GetString(Convert.FromBase64String(encryptedValue.Split('-')[1]));
+                        calculateHast = Encoding.UTF8.GetString(macTripleDES.ComputeHash(Encoding.UTF8.GetBytes(decryptedPassword)));
+
+                        if (storedHash != calculateHast)
+                            // Data was corrupted.
+                            return string.Empty;
+                    }
+                    catch
+                    {
+                        return string.Empty;
+                    }
+                    return decryptedPassword;
+                }
+            }
+        }
+        
+public double CalculationDistanceBetweentwoPoints(string origin, string Destination)
+        {
+
+            double TotalDistance = 0.0;
+            try
+            {
+                string APIKey = ConfigurationManager.AppSettings["GoogleAPIkey"].ToString();
+                DirectionsRequest directionRequest = new DirectionsRequest();
+                directionRequest.Alternatives = true;
+                directionRequest.OptimizeWaypoints = true;
+                directionRequest.TravelMode = TravelMode.Driving;
+                directionRequest.Origin = origin;//dtEmpList.Rows[row]["HomeGeoCode"].ToString();
+                directionRequest.Destination = Destination;//dtEmpList.Rows[row]["AppGeoCode"].ToString();
+                directionRequest.ApiKey = APIKey;
+                DirectionsResponse directionResponse = GoogleMaps.Directions.Query(directionRequest);
+
+                List<Route> lstroute = new List<Route>();
+                lstroute = directionResponse.Routes.ToList();
+
+
+                foreach (Route r in lstroute)
+                {
+                    if (r != null)
+                        for (int i = 0; i < r.Legs.Count(); i++)
+                        {
+                            TotalDistance = TotalDistance + (r.Legs.ToList()[i].Distance.Value / 1000.00);
+                        }
+                }
+                TotalDistance = TotalDistance / lstroute.Count;
+
+            }
+            catch (Exception ex)
+            {
+                //Bizlayer.InsertToLogTable(ConfigurationManager.ConnectionStrings["TmsConnectionString"].ToString(),
+                // ex.InnerException.ToString(), "NewDistanceCalculation", "CalculationDistanceBetweentwoPoints", "CalculationDistanceBetweentwoPoints");
+            }
+            return TotalDistance;
+        }
+        
+        
+[HttpPost]
+        public List<Entities.OutputStandByDriverDetails> GetFailureDriverDetails()
+        {
+            List<Entities.OutputStandByDriverDetails> listStandByDriversList = new List<Entities.OutputStandByDriverDetails>();
+            EmployeeProfileCreation objprofile = new EmployeeProfileCreation();
+            try
+            {
+                using (var connection = context.Database.Connection)
+                {
+                    connection.Open();
+                    var command = connection.CreateCommand();
+                    command.CommandText = @"SELECT LTRIM(RTRIM((ISNULL(dm.FirstName,'')+' '+ISNULL(dm.LastName,'')))) AS DriverName,dm.DriverId,dm.VehicleRegNum AS VehicleRegistrationNumber,    
+ dm.ContactNum AS ContactNumber,dm.LicenseNum AS LicenseNumber,(CONVERT(VARCHAR(20), dm.LicenseExpiryDate, 101)) AS LicenseExpiry,dm.Attrited,     
+ dm.OnBoardingFacility AS FacilityId,dm.PoliceVerificationStatus  AS PVCStatus,dm.DriverUse AS DutyType,(CONVERT(VARCHAR(20),     
+ dm.BadgeExpiryDate, 101)) AS BadgeExpiry,(CONVERT(VARCHAR(20), dm.MedicalCheckDate, 101)) AS MedicalCertificate,(CONVERT(VARCHAR(20), dm.TrainingLaunchDate, 101)) AS TrainingLaunchDate,      
+ dm.TrainingStatus, dm.DriverStatus AS DriverStatus,dm.isStandBy AS StandBy FROM DriverMaster(NOLOCK) dm INNER JOIN Tbl_LMCUpdateFailedDriversLog dmf ON dm.DriverId=dmf.DriverId";
+
+                    command.CommandType = CommandType.Text;
+                    using (var reader = command.ExecuteReader())
+                    {
+                        if (reader != null)
+                        {
+                            var data = ((IObjectContextAdapter)context)
+                                        .ObjectContext
+                                        .Translate<Entities.OutputStandByDriverDetails>(reader).ToList<Entities.OutputStandByDriverDetails>();
+
+                            listStandByDriversList = data;
+                        }
+                    }
+                    connection.Close();
+                }
+            }
+            catch (Exception ex)
+            {
+                objprofile.InsertExceptionLogs("TMSMasterDataController", "GetStandByDriverDetails", "Message: " + ex.Message);
+            }
+            return listStandByDriversList;
+        }
