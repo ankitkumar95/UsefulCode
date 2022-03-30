@@ -1,0 +1,143 @@
+[HttpPost]
+        public List<Enitities.TMSMasterData.ZoneDataSet> GetZones()
+        {
+            List<Enitities.TMSMasterData.ZoneDataSet> listZonesList = new List<Enitities.TMSMasterData.ZoneDataSet>();
+            using (var connection = context.Database.Connection)
+            {
+                connection.Open();
+                var command = connection.CreateCommand();
+                command.CommandText = "usp_GetZones";
+                command.CommandType = CommandType.StoredProcedure;
+                using (var reader = command.ExecuteReader())
+                {
+                    var data = ((IObjectContextAdapter)context)
+                                .ObjectContext
+                                .Translate<Enitities.TMSMasterData.ZoneDataSet>(reader).ToList<Enitities.TMSMasterData.ZoneDataSet>();
+
+                    listZonesList = data;
+                }
+                connection.Close();
+            }
+
+            return listZonesList;
+        }
+        
+        
+[HttpPost]
+        public List<EmpColonyLandmark> GetColonyLandMarkInfo(ODataActionParameters InputParameters)
+        {
+            List<EmpColonyLandmark> listColony = new List<EmpColonyLandmark>();
+            using (var connection = context.Database.Connection)
+            {
+                connection.Open();
+                var command = connection.CreateCommand();
+                command.CommandText = "GetColonyLandmark";
+                command.Parameters.Add(new SqlParameter("@FacilityID", Convert.ToString(InputParameters["FacilityId"])));
+                command.Parameters.Add(new SqlParameter("@StartLetter", Convert.ToString(InputParameters["StartLetter"])));
+                command.CommandType = CommandType.StoredProcedure;
+                using (var reader = command.ExecuteReader())
+                {
+                    var data = ((IObjectContextAdapter)context)
+                                .ObjectContext
+                                .Translate<EmpColonyLandmark>(reader).ToList<EmpColonyLandmark>();
+
+                    listColony = data;
+                }
+                connection.Close();
+            }
+
+            return listColony;
+        }
+        
+        
+[HttpPost]
+        public bool SaveZoneDetails(ODataActionParameters InputParameters)
+        {
+            bool IsSaved = false;
+
+            IEnumerable<EmpColonyLandmark> listColony = Enumerable.Empty<EmpColonyLandmark>();
+            if (InputParameters != null)
+                listColony = InputParameters["ZoneDetails"] as IEnumerable<EmpColonyLandmark>;
+
+            DataTable dtZone = new DataTable();
+            dtZone.Columns.Add("ZoneName");
+            dtZone.Columns.Add("Facility");
+            dtZone.Columns.Add("Colony");
+            dtZone.Columns.Add("Landmark");
+            dtZone.Columns.Add("GeoX");
+            dtZone.Columns.Add("GeoY");
+            dtZone.Columns.Add("CreatedBy");
+            dtZone.Columns.Add("CreatedOn");
+            dtZone.Columns.Add("ModifiedBy");
+            dtZone.Columns.Add("ModifiedOn");
+
+            foreach (EmpColonyLandmark item in listColony)
+            {
+                DataRow drZone = dtZone.NewRow();
+                drZone["ZoneName"] = item.ZoneName;
+                drZone["Facility"] = item.FacilityId;
+                drZone["Colony"] = item.Colony;
+                drZone["Landmark"] = item.Landmark;
+                drZone["GeoX"] = item.Geo_X;
+                drZone["GeoY"] = item.Geo_Y;
+                drZone["CreatedBy"] = item.CreatedById;
+                drZone["CreatedOn"] = item.CreatedDttm;
+                drZone["ModifiedBy"] = item.ModifiedById;
+                drZone["ModifiedOn"] = item.ModifiedDttm;
+
+                dtZone.Rows.Add(drZone);
+            }
+
+            if (dtZone != null && dtZone.Rows.Count > 0)
+                using (var connection = context.Database.Connection)
+                {
+                    connection.Open();
+                    var command = connection.CreateCommand();
+                    command.CommandText = "TRE_SaveZoneDetails";
+                    System.Data.SqlClient.SqlParameter param2 = new System.Data.SqlClient.SqlParameter();
+                    param2.SqlDbType = SqlDbType.Structured;
+                    param2.TypeName = "ZoneDetails";
+                    param2.ParameterName = "@tblZoneDetails";
+                    param2.Value = dtZone;
+                    command.Parameters.Add(param2);
+                    try
+                    {
+                        command.CommandType = CommandType.StoredProcedure;
+
+                        int rowsaffected = command.ExecuteNonQuery();
+                        if (rowsaffected != -1)
+                            IsSaved = true;
+                    }
+                    catch (Exception ex)
+                    { }
+
+                    connection.Close();
+                }
+
+            return IsSaved;
+        }
+        
+ [HttpPost]
+        public JsonResult<List<EmployeeResponse>> CreateEmployeeProfile(HttpRequestMessage InputParameters)
+        {
+
+            string val = EmployeeProfileValidationKey.ValidateAddressKeyMessage;
+            StringBuilder sberrorRemarks = new StringBuilder();
+            EmployeeProfileCreation objemprofile = new EmployeeProfileCreation();
+
+            objemprofile.LogIntxtFile("Start");
+
+            var content = InputParameters.Content;
+            var jsonString = content.ReadAsStringAsync();
+            jsonString.Wait();
+            JavaScriptSerializer serv = new JavaScriptSerializer();
+            var DetailsList = serv.Deserialize<clsGetEmployeeListforLog>(jsonString.Result.ToString());
+            objemprofile.LogIntxtFile("Deserialize");
+            List<EmployeeResponse> lstRes = new List<EmployeeResponse>();
+            lstRes = objemprofile.CreateEmployeeProfileMethod(DetailsList);
+            objemprofile.LogIntxtFile("Profile Created/Updated");
+            // return lstRes;
+            JsonSerializerSettings settings = new JsonSerializerSettings();
+            settings.NullValueHandling = NullValueHandling.Ignore;
+            return Json(lstRes, settings);
+        }
