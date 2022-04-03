@@ -1,0 +1,694 @@
+using ACPEmployeeFacility.Core;
+using ACPEmployeeFacility.Interfaces;
+using Newtonsoft.Json;
+using System;
+using System.Collections.Generic;
+using System.Data;
+using System.Data.SqlClient;
+using System.Net.Http;
+using System.Net.Http.Headers;
+using System.Text;
+using System.Threading.Tasks;
+using Microsoft.Azure.WebJobs.Host;
+using Microsoft.Extensions.Logging;
+using static ACPEmployeeFacility.Core.WBSEService;
+using ACPEmployeeFacility.Model;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.Internal;
+using Microsoft.Extensions.Primitives;
+using System.Net;
+using System.Linq;
+
+namespace ACPEmployeeFacility.BusinessLogic
+{
+    public class EmployeeFacilityMappingDetails : IEmployeeFacilityMapping
+    {
+       
+        DataAccess baseService = new DataAccess();
+        public const string FnGetSeatDetails = "DirectLock/GetSeatDetails";
+        public const string FnUpdateEmpFacData = "DirectLock/UpdateEmployeeFacilityData";
+        public const string FnGetProjectDetails = "DirectLock/GetProjectFacilityDetails";
+        public const string FnGetEmployeeDetails = "DirectLock/GetEmployeeFacilityDetails";
+        public const string FnGetInActiveFacility = "DirectLock/GetInActiveFacility";
+        public const string FnSendMessageEmployee = "FnSendMessageEmployee";
+        public const string FnSendMessageProject = "SendMessage";
+        public const string FnGetFacilityDetails = "DirectLock/GetFacilitiesList";
+        public string DataLimit = Convert.ToString(Environment.GetEnvironmentVariable("DataLimit"));
+        public string Logs = Convert.ToString(Environment.GetEnvironmentVariable("IsLog"));
+        public int isDSM = Convert.ToInt32(Environment.GetEnvironmentVariable("isDSM"));
+
+        public static int chunkLimit = Convert.ToInt32(Environment.GetEnvironmentVariable("chunkLimit"));
+
+        public async Task<DataTable> GetEmployeeFacilityMasterData(ILogger log)
+        {
+            string strQuery = "SELECT TOP " + DataLimit + " EmployeeFacilityMasterId, EnterpriseId, FacilityNm,ACPStatus,updatedDttm from EmployeeFacilityMaster where IsNull(IsProcessed,0) = 0 and ACPStatus =  '" + Constant.Resolved + "' and Entity= '"+ Constant.EntityEMP + "' and RESOURCESTATUS = '" + Constant.newJoinerCheck + "' ";
+
+            DataTable results = await baseService.GetDataAsync(System.Data.CommandType.Text, strQuery);
+            if (Logs == "true")
+            {
+                if (results.Rows.Count > 0)
+                {
+                    log.LogInformation("Information:Get records from EmployeeFacilityMaster: " + " Success");
+                }
+                else
+                {
+                    log.LogInformation("Information:Get records from EmployeeFacilityMaster: " + " Fail");
+                }
+            }
+            
+            return results;
+        }
+        public async Task<DataTable> UpdateEmployeeFacilityMasterData(ILogger log)
+        {
+            string strQuery1 = "Update TOP (" + DataLimit + ") EmployeeFacilityMaster set IsProcessed = 1 where IsProcessed = 0 and ACPStatus =  '" + Constant.Resolved + "'";
+
+            DataTable res = await baseService.GetDataAsync(System.Data.CommandType.Text, strQuery1);
+
+            if (Logs == "true")
+            {
+                log.LogInformation("Information:Update Flag to EmployeeFacilityMaster: " + " Success");
+            }
+            return res;
+        }
+        public async Task<string> InsertDataToWebApi(DataTable results,ILogger log)
+        {
+            try
+            {
+                int count = 0;
+               
+
+                string json = JsonConvert.SerializeObject(results, Formatting.Indented);
+                var httpContent = new StringContent(json.ToString(), Encoding.UTF8, "application/json");
+                var auth = new Oauth2();
+                var clientId = Convert.ToString(Environment.GetEnvironmentVariable("clientId"));
+                var clientSecret = Convert.ToString(Environment.GetEnvironmentVariable("DataClientSecret"));
+                var scope = Convert.ToString(Environment.GetEnvironmentVariable("Datascope"));
+                string apiUrl = string.Format(Environment.GetEnvironmentVariable("WebApiBaseUrl") + FnUpdateEmpFacData);
+                var authUrl = Convert.ToString(Environment.GetEnvironmentVariable("OAuthServiceUrl"));
+                var responseBody = auth.GenerateOauth2TokenAggregateData(authUrl, clientId, clientSecret, scope).Result;                
+                var oauthToken = responseBody.access_token;
+                
+                using (var client = new HttpClient())
+                {
+                    client.BaseAddress = new Uri(apiUrl);
+                    client.DefaultRequestHeaders.Accept.Clear();
+                    client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("*/*"));
+                    client.DefaultRequestHeaders.Add("Authorization", "bearer " + oauthToken);
+
+
+                    var response = await client.PostAsync(apiUrl, httpContent).ConfigureAwait(false);
+                    if (Logs == "true")
+                    {
+                        if (response.IsSuccessStatusCode)
+                        {
+                            log.LogInformation("Information:API Call: " + " Success" + response.Content);
+                        }
+                        else
+                        {
+                            log.LogInformation("Information:API Call: " + " Fail" + response.Content);
+                        }
+                    }
+                }
+                return Constant.OK;
+            }
+            catch (Exception ex)
+            {
+                log.LogInformation(ex.ToString());
+                throw ex;
+               
+            }
+        }
+        public async Task<string> GetProjectDetails(ILogger log)
+        {
+            try
+            {
+                string ProjectNm = "";
+
+                  var auth = new Oauth2();
+                var clientId = Convert.ToString(Environment.GetEnvironmentVariable("clientId"));
+                var clientSecret = Convert.ToString(Environment.GetEnvironmentVariable("DataClientSecret"));
+                var scope = Convert.ToString(Environment.GetEnvironmentVariable("Datascope"));
+                string apiUrl = string.Format(Environment.GetEnvironmentVariable("WebApiBaseUrl") + FnGetProjectDetails + "?IS_DSM_DAILY_PULL={0}", isDSM);
+                var authUrl = Convert.ToString(Environment.GetEnvironmentVariable("OAuthServiceUrl"));
+                var serviceUrl = Convert.ToString(Environment.GetEnvironmentVariable("ServiceApiBaseUrl") + FnSendMessageProject);
+                var responseBody = auth.GenerateOauth2TokenAggregateData(authUrl, clientId, clientSecret, scope).Result;
+                var oauthToken = responseBody.access_token;
+                List<ProjectFacilityModel> result = new List<ProjectFacilityModel>();
+                using (var client = new HttpClient())
+                {
+                    client.BaseAddress = new Uri(apiUrl);
+                    client.DefaultRequestHeaders.Accept.Clear();
+                    client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("*/*"));
+                    client.DefaultRequestHeaders.Add("Authorization", "bearer " + oauthToken);
+
+                    var response = await client.GetAsync(apiUrl).ConfigureAwait(false);
+                    if (Logs == "true")
+                    {
+                        if (response.IsSuccessStatusCode)
+                        {
+                            log.LogInformation("Information:API Call: " + " Success" + response.Content);
+                        }
+                        else
+                        {
+                            log.LogInformation("Information:API Call: " + " Fail" + response.Content);
+                        }
+                    }
+
+                    var responseWs = new WebServiceResponse
+                    {
+                        StatusCode = response.StatusCode,
+                        ResponseMessage = response.RequestMessage,
+                        Body = await response.Content.ReadAsStringAsync().ConfigureAwait(false)
+                    };
+                    result = JsonConvert.DeserializeObject<List<ProjectFacilityModel>>(responseWs.Body);
+
+                    var res = ChunkBy(result, chunkLimit);
+
+                    foreach (var obj in res)
+                    {
+                        string jsonList = JsonConvert.SerializeObject(obj, Formatting.Indented);
+
+                        var httpContent = new StringContent(jsonList.ToString(), Encoding.UTF8, "application/json");
+
+                        HttpResponseMessage responseFromAnotherFunction = await client.PostAsync(serviceUrl, httpContent);
+
+                    }
+                    
+                        
+                }
+               
+            }
+            catch (Exception ex)
+            {
+                log.LogInformation($"Exception={ex.ToString()}");
+            }
+            return Constant.OK;
+        }
+        public static List<List<ProjectFacilityModel>> ChunkBy<ProjectFacilityModel>(List<ProjectFacilityModel> source, int chunkSize)
+        {
+            return source
+                .Select((x, i) => new { Index = i, Value = x })
+                .GroupBy(x => x.Index / chunkSize)
+                .Select(x => x.Select(v => v.Value).ToList())
+                .ToList();
+        }
+        public async Task<string> GetEmployeeDetails(ILogger log)
+        {
+            try
+            {
+                string ProjectNm = "";
+
+                var auth = new Oauth2();
+                var clientId = Convert.ToString(Environment.GetEnvironmentVariable("clientId"));
+                var clientSecret = Convert.ToString(Environment.GetEnvironmentVariable("DataClientSecret"));
+                var scope = Convert.ToString(Environment.GetEnvironmentVariable("Datascope"));
+                string apiUrl = string.Format(Environment.GetEnvironmentVariable("WebApiBaseUrl") + FnGetEmployeeDetails + "?IS_DSM_DAILY_PULL={0}", isDSM);
+                var authUrl = Convert.ToString(Environment.GetEnvironmentVariable("OAuthServiceUrl"));
+                var serviceUrl = Convert.ToString(Environment.GetEnvironmentVariable("ServiceApiBaseUrl")+ FnSendMessageEmployee);
+                var responseBody = auth.GenerateOauth2TokenAggregateData(authUrl, clientId, clientSecret, scope).Result;
+                var oauthToken = responseBody.access_token;
+                List<EmployeeFacModel> result = new List<EmployeeFacModel>();
+                using (var client = new HttpClient())
+                {
+                    client.BaseAddress = new Uri(apiUrl);
+                    client.DefaultRequestHeaders.Accept.Clear();
+                    client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("*/*"));
+                    client.DefaultRequestHeaders.Add("Authorization", "bearer " + oauthToken);
+
+                    var response = await client.GetAsync(apiUrl).ConfigureAwait(false);
+                    if (Logs == "true")
+                    {
+                        if (response.IsSuccessStatusCode)
+                        {
+                            log.LogInformation("Information:API Call: " + " Success" + response.Content);
+                        }
+                        else
+                        {
+                            log.LogInformation("Information:API Call: " + " Fail" + response.Content);
+                        }
+                    }
+                    var responseWs = new WebServiceResponse
+                    {
+                        StatusCode = response.StatusCode,
+                        ResponseMessage = response.RequestMessage,
+                        Body = await response.Content.ReadAsStringAsync().ConfigureAwait(false)
+                    };
+                    result = JsonConvert.DeserializeObject<List<EmployeeFacModel>>(responseWs.Body);
+
+                    var res = ChunkBy(result, chunkLimit);
+
+                    foreach (var obj in res)
+                    {
+                        string jsonList = JsonConvert.SerializeObject(obj, Formatting.Indented);
+
+                        var httpContent = new StringContent(jsonList.ToString(), Encoding.UTF8, "application/json");
+
+                        HttpResponseMessage responseFromAnotherFunction = await client.PostAsync(serviceUrl, httpContent);
+
+                    }
+
+                }
+    
+            }
+            catch (Exception ex)
+            {
+                log.LogInformation($"Exception={ex.ToString()}");
+            }
+            return Constant.OK;
+        }
+        
+       
+        public async Task<DataTable> GetFileNames(int fileID)
+        {
+            string query = "SELECT FileNames from UploadFileData  WHERE FileId = @fileId";
+            SqlParameter fileId = new SqlParameter("@fileId", SqlDbType.VarChar) { Value = fileID };
+            SqlParameter[] objParams = new SqlParameter[1];
+            objParams[0] = fileId;
+            DataTable results = await baseService.GetDataAsync(System.Data.CommandType.Text, query, objParams);
+
+            return results;
+        }
+        public async Task<DataTable> GetUploadFileErrors(int fileID)
+        {
+            string strQuery = "SELECT EnterpriseId,FacilityName,ErrorReason from UploadFileErrors WHERE FileId = @fileId";
+            SqlParameter fileIds = new SqlParameter("@fileId", SqlDbType.VarChar) { Value = fileID };
+            SqlParameter[] objParam = new SqlParameter[1];
+            objParam[0] = fileIds;
+            DataTable results = await baseService.GetDataAsync(System.Data.CommandType.Text, strQuery, objParam);
+
+            return results;
+        }
+
+        public async Task<int> UpdateUploadFileData(int fileID, string fileNameExt)
+        {
+            string strQ = "UPDATE UploadFileData SET ErrorFileName = @fileNameExt WHERE FileId = @fileId";
+            SqlParameter fileIdUpdate = new SqlParameter("@fileId", SqlDbType.VarChar) { Value = fileID };
+            SqlParameter fileNameUpdated = new SqlParameter("@fileNameExt", SqlDbType.VarChar) { Value = fileNameExt };
+            SqlParameter[] objPrm = new SqlParameter[2];
+            objPrm[0] = fileIdUpdate;
+            objPrm[1] = fileNameUpdated;
+            int iResult = await baseService.ExecuteNonQueryAsync(System.Data.CommandType.Text, strQ, objPrm);
+
+            return iResult;
+        }
+        public async Task<int> InsertProjectData(ProjectFacilityModel model)
+        {
+
+          
+            string query = "IF NOT EXISTS(Select 1 from ProjectFacilityMaster " +
+                " where AbacusProjectId = @AbacusProjectId And FacilityNm = @FacilityNm and Entity = '" + model.Entity + "')" +
+                " Begin" +
+                " Insert into ProjectFacilityMaster(ProjectNm,AbacusProjectId,City,CityAlias,FacilityNm,FacilityCd,IsQualified,CreatedDttm,CreatedBy,IsActive,IsSEZ,Entity,IsDefault) " +
+                " VALUES(@ProjectNm,@AbacusProjectId,@City,@cityalias,@FacilityNm,@FacilityCd,@isqualified,GETDATE(),'" + Constant.CreatedBySystem + "','" + Constant.ActiveStatus + "',@isSez,@entity,'" + Constant.isDefaultValue + "')" +
+                " End";
+          
+            SqlParameter ProjectName = new SqlParameter("@ProjectNm", SqlDbType.VarChar) { Value = model.ABBACUSPROJECTNAME };
+            SqlParameter AbacusPrId = new SqlParameter("@AbacusProjectId", SqlDbType.Int) { Value = model.ABACUSPROJECTID };
+            SqlParameter city = new SqlParameter("@City", SqlDbType.VarChar) { Value = model.City };
+            SqlParameter FacilityName = new SqlParameter("@FacilityNm", SqlDbType.VarChar) { Value = model.FACILITY };
+            SqlParameter FacCode = new SqlParameter("@FacilityCd", SqlDbType.VarChar) { Value = model.FACILITYCODE };
+            SqlParameter Isqualified = new SqlParameter("@isqualified", SqlDbType.Bit) { Value = model.ISQUALIFIED };
+            SqlParameter IsSEZ = new SqlParameter("@isSez", SqlDbType.Int) { Value = Convert.ToInt32(model.IS_SEZ) };
+            SqlParameter Entity = new SqlParameter("@entity", SqlDbType.VarChar) { Value = model.Entity };
+            SqlParameter cityalias = new SqlParameter("@cityalias", SqlDbType.VarChar) { Value = model.CityAlias };
+
+            SqlParameter[] objPrm = new SqlParameter[9];
+            objPrm[0] = ProjectName;
+            objPrm[1] = AbacusPrId;
+            objPrm[2] = city;
+            objPrm[3] = FacilityName;
+            objPrm[4] = FacCode;
+            objPrm[5] = Isqualified;
+            objPrm[6] = IsSEZ;
+            objPrm[7] = Entity;
+            objPrm[8] = cityalias;
+            int iResult = await baseService.ExecuteNonQueryAsync(System.Data.CommandType.Text, query, objPrm);
+
+            return iResult;
+        }
+        public async Task<DataTable> GetProjectIdbyEnterpriseid(EmployeeFacModel model)
+        {
+
+            string query = "Select AbacusProjectID,facilityCd,ServiceNowMasterId,RESOURCESTATUS,ACPStatus,IsIUTSent,IsSEZSent from EmployeeFacilityMaster " +
+                "where EnterpriseId = @EnterpriseId";
+
+            SqlParameter EnterpriseID = new SqlParameter("@EnterpriseId", SqlDbType.VarChar) { Value = model.ENTERPRISEID };
+            SqlParameter FacilityName = new SqlParameter("@FacilityNm", SqlDbType.VarChar) { Value = model.FACILITY };
+            SqlParameter AbacusProjId = new SqlParameter("@AbacusProjectID", SqlDbType.Int) { Value = model.ABACUSPROJECTID };
+            SqlParameter City = new SqlParameter("@city", SqlDbType.VarChar) { Value = model.City };
+            SqlParameter FacCode = new SqlParameter("@facilityCd", SqlDbType.VarChar) { Value = model.FACILITYCODE };
+
+            SqlParameter[] objPrm = new SqlParameter[5];
+            objPrm[0] = EnterpriseID;
+            objPrm[1] = FacilityName;
+            objPrm[2] = AbacusProjId;
+            objPrm[3] = City;
+            objPrm[4] = FacCode;
+
+            DataTable results = await baseService.GetDataAsync(System.Data.CommandType.Text, query, objPrm);
+
+            return results;
+
+
+        }
+
+        public async Task<int> UpdateEmployee(EmployeeFacModel model)
+        {
+
+            string query = " Update EmployeeFacilityMaster" +
+                " Set PreviousFacility = FacilityNm,FacilityNm = @FacilityNm,AbacusProjectID = @AbacusProjectID,Project=@AbacusProjectNm,ACPStatus =@ACPStatus,CityAlias=@cityalias,city = @city,facilityCd = @facilityCd,updatedBy = 'System',updatedDttm = GETDATE(),IsProcessed = 0,IsSEZSent = 0,IsIUTSent = 0,RESOURCESTATUS=@RESOURCESTATUS,IsLocFlex=@IsLocFlex,TentativeDOJ=@TentativeDOJ,ActualDOJ=@ActualDOJ where EnterpriseId = @EnterpriseId";
+
+            SqlParameter EnterpriseID = new SqlParameter("@EnterpriseId", SqlDbType.VarChar) { Value = model.ENTERPRISEID };
+            SqlParameter FacilityName = new SqlParameter("@FacilityNm", SqlDbType.VarChar) { Value = model.FACILITY };
+            SqlParameter AbacusProjId = new SqlParameter("@AbacusProjectID", SqlDbType.Int) { Value = model.ABACUSPROJECTID };
+            SqlParameter City = new SqlParameter("@city", SqlDbType.VarChar) { Value = model.City };
+            SqlParameter FacCode = new SqlParameter("@facilityCd", SqlDbType.VarChar) { Value = model.FACILITYCODE };
+            SqlParameter AbacusProjnm = new SqlParameter("@AbacusProjectNm", SqlDbType.VarChar) { Value = model.ABBACUSPROJECTNAME };
+            SqlParameter cityalias = new SqlParameter("@cityalias", SqlDbType.VarChar) { Value = model.CityAlias };
+            SqlParameter TentativeDOJ = new SqlParameter("@TentativeDOJ", SqlDbType.VarChar) { Value = model.TentativeDOJ };
+            SqlParameter ActualDOJ = new SqlParameter("@ActualDOJ", SqlDbType.VarChar) { Value = model.ActualDOJ };
+            SqlParameter RESOURCESTATUS = new SqlParameter("@RESOURCESTATUS", SqlDbType.VarChar) { Value = model.RESOURCESTATUS };
+
+            SqlParameter ACPStatus = new SqlParameter("@ACPStatus", SqlDbType.VarChar) { Value = model.ACPStatus };
+            SqlParameter IsLocFlex = new SqlParameter("@IsLocFlex", SqlDbType.VarChar) { Value = model.IsLocationFlex };
+
+            SqlParameter[] objPrm = new SqlParameter[12];
+            objPrm[0] = EnterpriseID;
+            objPrm[1] = FacilityName;
+            objPrm[2] = AbacusProjId;
+            objPrm[3] = City;
+            objPrm[4] = FacCode;
+            objPrm[5] = AbacusProjnm;
+            objPrm[6] = cityalias;
+            objPrm[7] = TentativeDOJ;
+            objPrm[8] = ActualDOJ;
+            objPrm[9] = RESOURCESTATUS;
+            objPrm[10] = ACPStatus;
+            objPrm[11] = IsLocFlex;
+            int iResult = await baseService.ExecuteNonQueryAsync(System.Data.CommandType.Text, query, objPrm);
+
+            return iResult;
+        }
+
+        public async Task<int> UpdateEmployeeResourceStatus(EmployeeFacModel model)
+        {
+
+            string query = " Update EmployeeFacilityMaster" +
+                " Set updatedBy = 'System',updatedDttm = GETDATE(),RESOURCESTATUS=@RESOURCESTATUS,TentativeDOJ=@TentativeDOJ,ActualDOJ=@ActualDOJ where EnterpriseId = @EnterpriseId";
+
+            SqlParameter EnterpriseID = new SqlParameter("@EnterpriseId", SqlDbType.VarChar) { Value = model.ENTERPRISEID };
+            SqlParameter RESOURCESTATUS = new SqlParameter("@RESOURCESTATUS", SqlDbType.VarChar) { Value = model.RESOURCESTATUS };
+            SqlParameter TentativeDOJ = new SqlParameter("@TentativeDOJ", SqlDbType.VarChar) { Value = model.TentativeDOJ };
+            SqlParameter ActualDOJ = new SqlParameter("@ActualDOJ", SqlDbType.VarChar) { Value = model.ActualDOJ };
+
+            SqlParameter[] objPrm = new SqlParameter[4];
+            objPrm[0] = EnterpriseID;
+            objPrm[1] = RESOURCESTATUS;
+            objPrm[2] = TentativeDOJ;
+            objPrm[3] = ActualDOJ;
+            int iResult = await baseService.ExecuteNonQueryAsync(System.Data.CommandType.Text, query, objPrm);
+
+            return iResult;
+        }
+        public async Task<int> InsertEmployeeData(EmployeeFacModel model)
+        {
+           
+            string query = "Insert into EmployeeFacilityMaster(EnterpriseId, FacilityNm, AbacusProjectID,Project, city, facilityCd, ACPStatus,updatedBy,updatedDttm,Entity,CityAlias,RESOURCESTATUS,TentativeDOJ,ActualDOJ,IsIUTSent,IsSEZSent,IsLocFlex)" +
+                  " VALUES(@EnterpriseId,@FacilityNm,@AbacusProjectID,@AbacusProjectNm,@city,@facilityCd,@ACPStatus,'System',GETDATE(),@entity,@cityalias,@RESOURCESTATUS,@TentativeDOJ,@ActualDOJ,@IsIUTSent,@IsSEZSent,@IsLocFlex)" +
+                  "SELECT @@IDENTITY AS 'Identity' ";
+           
+            SqlParameter EnterpriseID = new SqlParameter("@EnterpriseId", SqlDbType.VarChar) { Value = model.ENTERPRISEID };
+            SqlParameter FacilityName = new SqlParameter("@FacilityNm", SqlDbType.VarChar) { Value = model.FACILITY };
+            SqlParameter AbacusProjId = new SqlParameter("@AbacusProjectID", SqlDbType.Int) { Value = model.ABACUSPROJECTID };
+            SqlParameter AbacusProjnm = new SqlParameter("@AbacusProjectNm", SqlDbType.VarChar) { Value = model.ABBACUSPROJECTNAME };
+            SqlParameter City = new SqlParameter("@city", SqlDbType.VarChar) { Value = model.City };
+            SqlParameter FacCode = new SqlParameter("@facilityCd", SqlDbType.VarChar) { Value = model.FACILITYCODE };
+            SqlParameter Entity = new SqlParameter("@entity", SqlDbType.VarChar) { Value = model.Entity };
+            SqlParameter cityalias = new SqlParameter("@cityalias", SqlDbType.VarChar) { Value = model.CityAlias };
+
+            SqlParameter RESOURCESTATUS = new SqlParameter("@RESOURCESTATUS", SqlDbType.VarChar) { Value = model.RESOURCESTATUS };
+            SqlParameter TentativeDOJ = new SqlParameter("@TentativeDOJ", SqlDbType.VarChar) { Value = model.TentativeDOJ };
+            SqlParameter ActualDOJ = new SqlParameter("@ActualDOJ", SqlDbType.VarChar) { Value = model.ActualDOJ };
+
+            SqlParameter IsIUTSent = new SqlParameter("@IsIUTSent", SqlDbType.Int) { Value = 0 };
+            SqlParameter IsSEZSent = new SqlParameter("@IsSEZSent", SqlDbType.Int) { Value = 0 };
+            SqlParameter ACPStatus = new SqlParameter("@ACPStatus", SqlDbType.VarChar) { Value = model.ACPStatus };
+            SqlParameter IsLocFlex = new SqlParameter("@IsLocFlex", SqlDbType.VarChar) { Value = model.IsLocationFlex };
+
+            SqlParameter[] objPrm = new SqlParameter[15];
+            
+            objPrm[0] = EnterpriseID;
+            objPrm[1] = FacilityName;
+            objPrm[2] = AbacusProjId;
+            objPrm[3] = AbacusProjnm;
+            objPrm[4] = City;
+            objPrm[5] = FacCode; 
+            objPrm[6] = Entity;
+            objPrm[7] = cityalias;
+
+            objPrm[8] = RESOURCESTATUS;
+            objPrm[9] = TentativeDOJ;
+            objPrm[10] = ActualDOJ;
+            objPrm[11] = IsIUTSent;
+            objPrm[12] = IsSEZSent;
+
+            objPrm[13] = ACPStatus;
+            objPrm[14] = IsLocFlex;
+            int iResult = await baseService.ExecuteNonQueryAsync(System.Data.CommandType.Text, query, objPrm);
+
+            return iResult;
+
+        }
+
+
+        
+        public async Task<List<InActiveFacilityModel>> GetInActiveFacility(ILogger log)
+        {
+            List<InActiveFacilityModel> result = new List<InActiveFacilityModel>();
+            try
+            {
+                var auth = new Oauth2();
+                var clientId = Convert.ToString(Environment.GetEnvironmentVariable("clientId"));
+                var clientSecret = Convert.ToString(Environment.GetEnvironmentVariable("DataClientSecret"));
+                var scope = Convert.ToString(Environment.GetEnvironmentVariable("Datascope"));
+                string apiUrl = string.Format(Environment.GetEnvironmentVariable("WebApiBaseUrl") + FnGetInActiveFacility);
+                var authUrl = Convert.ToString(Environment.GetEnvironmentVariable("OAuthServiceUrl"));                
+                var responseBody = auth.GenerateOauth2TokenAggregateData(authUrl, clientId, clientSecret, scope).Result;
+                var oauthToken = responseBody.access_token;
+                
+                using (var client = new HttpClient())
+                {
+                    client.BaseAddress = new Uri(apiUrl);
+                    client.DefaultRequestHeaders.Accept.Clear();
+                    client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("*/*"));
+                    client.DefaultRequestHeaders.Add("Authorization", "bearer " + oauthToken);
+
+                    var response = await client.GetAsync(apiUrl).ConfigureAwait(false);
+
+                    var responseWs = new WebServiceResponse
+                    {
+                        StatusCode = response.StatusCode,
+                        ResponseMessage = response.RequestMessage,
+                        Body = await response.Content.ReadAsStringAsync().ConfigureAwait(false)
+                    };
+                    result = JsonConvert.DeserializeObject<List<InActiveFacilityModel>>(responseWs.Body);    
+                }
+                
+            }
+            catch (Exception ex)
+            {
+                throw ex;
+            }
+            return result;
+        }
+
+        public async Task<DataTable> CheckInActiveFacilityInProjectMaster(string FacilyName)
+        {
+            string strQuery = "select Top 1 FacilityNm from ProjectFacilityMaster WHERE FacilityNm =  @FacilityNm";
+            SqlParameter FacilityNm = new SqlParameter("@FacilityNm", SqlDbType.VarChar) { Value = FacilyName };
+            SqlParameter[] objParam = new SqlParameter[1];
+            objParam[0] = FacilityNm;
+            DataTable results = await baseService.GetDataAsync(System.Data.CommandType.Text, strQuery, objParam);
+
+            return results;
+        }
+
+        public async Task<int> DeleteInActivefacility(string FacilyName)
+        {
+            string strQuery = "delete from ProjectFacilityMaster WHERE FacilityNm =  @FacilityNm";
+            SqlParameter FacilityNm = new SqlParameter("@FacilityNm", SqlDbType.VarChar) { Value = FacilyName };
+            SqlParameter[] objParam = new SqlParameter[1];
+            objParam[0] = FacilityNm;
+            int iResult = await baseService.ExecuteNonQueryAsync(System.Data.CommandType.Text, strQuery, objParam);
+
+            return iResult;
+        }
+        public async Task<int> UpdateUnResolvedInActivefacility(string FacilyName)
+        {
+            string strQuery = "update EmployeeFacilityMaster set ACPStatus = '" + Constant.Unresolved + "' WHERE FacilityNm =  @FacilityNm";
+            SqlParameter FacilityNm = new SqlParameter("@FacilityNm", SqlDbType.VarChar) { Value = FacilyName };
+            SqlParameter[] objParam = new SqlParameter[1];
+            objParam[0] = FacilityNm;
+            int iResult = await baseService.ExecuteNonQueryAsync(System.Data.CommandType.Text, strQuery, objParam);
+
+            return iResult;
+        }
+        public async Task<List<ACPProjectFacilityModel>> GetFacilityDeciderProjectdetails(ILogger logger)
+        {
+            List<ACPProjectFacilityModel> result = new List<ACPProjectFacilityModel>();
+            try
+            {
+                var auth = new Oauth2();
+                var clientId = Convert.ToString(Environment.GetEnvironmentVariable("clientId"));
+                var clientSecret = Convert.ToString(Environment.GetEnvironmentVariable("DataClientSecret"));
+                var scope = Convert.ToString(Environment.GetEnvironmentVariable("Datascope"));
+                string apiUrl = string.Format(Environment.GetEnvironmentVariable("WebApiBaseUrl") + FnGetFacilityDetails);
+                var authUrl = Convert.ToString(Environment.GetEnvironmentVariable("OAuthServiceUrl"));
+                var responseBody = auth.GenerateOauth2TokenAggregateData(authUrl, clientId, clientSecret, scope).Result;
+                var oauthToken = responseBody.access_token;
+               
+                using (var client = new HttpClient())
+                {
+                    client.BaseAddress = new Uri(apiUrl);
+                    client.DefaultRequestHeaders.Accept.Clear();
+                    client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("*/*"));
+                    client.DefaultRequestHeaders.Add("Authorization", "Bearer " + oauthToken);
+                    var response = await client.GetAsync(apiUrl).ConfigureAwait(false);
+                    if (Logs == "true")
+                    {
+                        if (response.IsSuccessStatusCode)
+                        {
+                            logger.LogInformation("Information:API Call: " + " Success" + response.Content);
+                        }
+                        else
+                        {
+                            logger.LogInformation("Information:API Call: " + " Fail" + response.Content);
+                        }
+                    }
+
+                    var responseWs = new WebServiceResponse
+                    {
+                        StatusCode = response.StatusCode,
+                        ResponseMessage = response.RequestMessage,
+                        Body = await response.Content.ReadAsStringAsync().ConfigureAwait(false)
+                    };
+                    result = JsonConvert.DeserializeObject<List<ACPProjectFacilityModel>>(responseWs.Body);
+                }
+
+            }
+            catch (Exception ex)
+            {
+                logger.LogInformation(ex.ToString());
+                throw ex;
+            }
+            return result;
+        }
+        public async Task<int> InsertFacilityDecider_Data(ACPProjectFacilityModel model, ILogger logger)
+
+        {
+            try
+            {
+                string query = "if not exists (select 1 from  FacilityAvailability" +
+                  " where ACPFacilityName =@ACPFacility and BusinesstypeID = @BusinessTypeId )" +
+                  " begin" +
+                  " insert into FacilityAvailability(BusinesstypeID,ACPFacilityName,MRDRFacilityCode,FreeSeatCount,IsActive,CreatedBy,CreatedDttm,UpdatedBy,UpdatedDttm,CityAlias)" +
+                  "values (@BusinessTypeId, @ACPFacility, @MRDRFacilityCode, @freeSeatCount, @IsActive, @CreatedBy, @CreatedDttm, @UpdatedBy, @UpdatedDttm, @CityAlias) " +
+                  " end ";
+
+                SqlParameter Fd_BusinessTypeId = new SqlParameter("@BusinessTypeId", SqlDbType.Int) { Value = model.BusinessTypeId };
+                SqlParameter Fd_ACPFacility = new SqlParameter("@ACPFacility", SqlDbType.VarChar) { Value = model.ACPFacility };
+                SqlParameter Fd_MRDRFacilityCode = new SqlParameter("@MRDRFacilityCode", SqlDbType.VarChar) { Value = model.MRDRFacilityCode };
+                SqlParameter Fd_FreeSeatCount = new SqlParameter("@FreeSeatCount", SqlDbType.Int) { Value = model.FreeSeatCount };
+                SqlParameter Fd_IsActive = new SqlParameter("@IsActive", SqlDbType.Bit) { Value = model.IsActive };
+                SqlParameter Fd_CreatedBy = new SqlParameter("@CreatedBy", SqlDbType.VarChar) { Value = model.CreatedBy };
+                SqlParameter Fd_CreatedDttm = new SqlParameter("@CreatedDttm", SqlDbType.DateTime) { Value = model.CreatedDttm };
+                SqlParameter Fd_UpdatedBy = new SqlParameter("@UpdatedBy", SqlDbType.VarChar) { Value = model.UpdateBy };
+                SqlParameter Fd_UpdatedDttm = new SqlParameter("@UpdatedDttm", SqlDbType.DateTime) { Value = model.UpdatedDttm };
+                SqlParameter Fd_CityAlias = new SqlParameter("@CityAlias", SqlDbType.VarChar) { Value = model.CityAlias };
+
+                SqlParameter[] objparm = new SqlParameter[10];
+                objparm[0] = Fd_BusinessTypeId;
+                objparm[1] = Fd_ACPFacility;
+                objparm[2] = Fd_MRDRFacilityCode;
+                objparm[3] = Fd_FreeSeatCount;
+                objparm[4] = Fd_IsActive;
+                objparm[5] = Fd_CreatedBy;
+                objparm[6] = Fd_CreatedDttm;
+                objparm[7] = Fd_UpdatedBy;
+                objparm[8] = Fd_UpdatedDttm;
+                objparm[9] = Fd_CityAlias;
+
+
+                int res = await baseService.ExecuteNonQueryAsync(System.Data.CommandType.Text, query, objparm);
+
+                return res;
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex.ToString(), "InsertFacilityDecider_Data");
+                throw ex;
+            }
+
+
+        }
+        public async Task<DataTable> GetProjectUploadFileErrors(int fileID)
+        {
+            string strQuery = "SELECT Entity,ProjectId,Project,ProjectPOC,ProjectSDL,ErrorReason,UpdatedDtm from ProjectFileErrors WHERE FileId = @fileId";
+            SqlParameter fileIds = new SqlParameter("@fileId", SqlDbType.VarChar) { Value = fileID };
+            SqlParameter[] objParam = new SqlParameter[1];
+            objParam[0] = fileIds;
+            DataTable results = await baseService.GetDataAsync(System.Data.CommandType.Text, strQuery, objParam);
+
+            return results;
+
+
+        }
+        public async Task<int> UpdateFacilityDecider_Data(ACPProjectFacilityModel model, ILogger logger)
+        {
+            try
+            {
+
+                string query = "if exists (select 1 from  FacilityAvailability" +
+                   " where ACPFacilityName =@ACPFacility and BusinesstypeID = @BusinessTypeId )" +
+                " begin" +
+                " update FacilityAvailability set FreeSeatCount=@freeSeatCount,CreatedDttm =getdate(),UpdatedDttm=getdate(),CityAlias = @CityAlias where  ACPFacilityName=@ACPFacility  and BusinesstypeID = @BusinessTypeId " +
+                " end ";
+                SqlParameter Fd_BusinessTypeId = new SqlParameter("@BusinessTypeId", SqlDbType.Int) { Value = model.BusinessTypeId };
+                SqlParameter Fd_ACPFacility = new SqlParameter("@ACPFacility", SqlDbType.VarChar) { Value = model.ACPFacility };
+                SqlParameter Fd_MRDRFacilityCode = new SqlParameter("@MRDRFacilityCode", SqlDbType.VarChar) { Value = model.MRDRFacilityCode };
+                SqlParameter Fd_FreeSeatCount = new SqlParameter("@FreeSeatCount", SqlDbType.Int) { Value = model.FreeSeatCount };
+                SqlParameter Fd_IsActive = new SqlParameter("@IsActive", SqlDbType.Bit) { Value = model.IsActive };
+                SqlParameter Fd_CreatedBy = new SqlParameter("@CreatedBy", SqlDbType.VarChar) { Value = model.CreatedBy };
+                SqlParameter Fd_CreatedDttm = new SqlParameter("@CreatedDttm", SqlDbType.DateTime) { Value = model.CreatedDttm };
+                SqlParameter Fd_UpdatedBy = new SqlParameter("@UpdatedBy", SqlDbType.VarChar) { Value = model.UpdateBy };
+                SqlParameter Fd_UpdatedDttm = new SqlParameter("@UpdatedDttm", SqlDbType.DateTime) { Value = model.UpdatedDttm };
+                SqlParameter Fd_CityAlias = new SqlParameter("@CityAlias", SqlDbType.VarChar) { Value = model.CityAlias };
+
+                SqlParameter[] objparm = new SqlParameter[10];
+                objparm[0] = Fd_BusinessTypeId;
+                objparm[1] = Fd_ACPFacility;
+                objparm[2] = Fd_MRDRFacilityCode;
+                objparm[3] = Fd_FreeSeatCount;
+                objparm[4] = Fd_IsActive;
+                objparm[5] = Fd_CreatedBy;
+                objparm[6] = Fd_CreatedDttm;
+                objparm[7] = Fd_UpdatedBy;
+                objparm[8] = Fd_UpdatedDttm;
+                objparm[9] = Fd_CityAlias;
+
+
+                int res = await baseService.ExecuteNonQueryAsync(System.Data.CommandType.Text, query, objparm);
+
+                return res;
+            }
+
+            catch (Exception ex)
+            {
+                logger.LogError(ex.ToString(), "UpdateFacilityDecider_Data");
+                throw ex;
+            }
+
+        }
+        
+    }
+}
