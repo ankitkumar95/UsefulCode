@@ -1,0 +1,151 @@
+using ACPEmployeeFacility.BusinessLogic;
+using ACPEmployeeFacility.Interfaces;
+using Microsoft.AspNetCore.Http;
+using Microsoft.Azure.WebJobs;
+using Microsoft.Azure.WebJobs.Extensions.Http;
+using Microsoft.Extensions.Logging;
+using Newtonsoft.Json;
+using System;
+using System.Collections.Generic;
+using System.Net;
+using System.Net.Http;
+using System.Text;
+using System.Threading.Tasks;
+using ACPEmployeeFacility.Core;
+using System.IO;
+using ACPEmployeeFacility.Data_Access;
+
+namespace ACPEmployeeFacility
+{
+    public class NonAtciProjectUploadExcel
+    {
+        public static EmployeeFacilityHelperDetails employeefacilitydetails = new EmployeeFacilityHelperDetails();
+        public static AzureCommon_Data azureCommon = new AzureCommon_Data();
+        public static IAzureCommon _iazureCommon = azureCommon;
+
+        public static IEmployeeFacilityHelper _iemployeeFacilityhelper = employeefacilitydetails;
+        [FunctionName(FunctionNames.FnValidateNonAtciUpload)]
+        public static async Task<object> ValidateProjectUploadFile([HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "ValidateProjectUploadFile")] HttpRequest req, ILogger log)
+        {
+            EmployeeFacilityHelper employeefacility = new EmployeeFacilityHelper(_iemployeeFacilityhelper);
+            try
+            {
+                IFormFile file = req.Form.Files[0];
+                var obj = await employeefacility.ValidateExcelFile(req, log, Constant.nonatci);
+                if (obj != null)
+                {
+                    var content = new StringContent(JsonConvert.SerializeObject(obj), Encoding.UTF8, "application/json");
+                    return new HttpResponseMessage(HttpStatusCode.OK) { Content = content };
+                }
+                else
+                {
+                    return new HttpResponseMessage(HttpStatusCode.NotFound);
+                }
+            }
+            catch (Exception ex)
+            {
+                log.LogInformation("Error: " + ex.ToString());
+                return new HttpResponseMessage(HttpStatusCode.BadRequest);
+            }
+        }
+
+        [FunctionName(FunctionNames.FnProcessProjectFile)]
+        public static async Task<object> ProcessProjectUploadFile([HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "ProcessProjectUpload")] HttpRequest req, ILogger log)
+        {
+            EmployeeFacilityHelper employeefacility = new EmployeeFacilityHelper(_iemployeeFacilityhelper, _iazureCommon);
+            try
+            {
+
+                var obj = await employeefacility.ProcessProjectUpload(req, log);
+                if (obj != null)
+                {
+                    var content = new StringContent(JsonConvert.SerializeObject(obj), Encoding.UTF8, "application/json");
+                    return new HttpResponseMessage(HttpStatusCode.OK) { Content = content };
+                }
+                else
+                {
+                    return new HttpResponseMessage(HttpStatusCode.NotFound);
+                }
+            }
+            catch (Exception ex)
+            {
+                log.LogInformation("Error: " + ex.ToString());
+                return new HttpResponseMessage(HttpStatusCode.BadRequest);
+            }
+        }
+        [FunctionName("downloadProjectErrorExcel")]
+        public static async Task<HttpResponseMessage> downloadProjectErrorExcel([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "downloadProjectErrorExcel")] HttpRequest req, ILogger log)
+        {
+            try
+            {
+                string filename = Convert.ToString(req.Query["filename"]);
+                MemoryStream ms = new MemoryStream();
+
+                var blob = _iazureCommon.GetFileFromCloud(filename, 2);
+
+                await blob.DownloadToStreamAsync(ms);
+
+                HttpResponseMessage message = new HttpResponseMessage(HttpStatusCode.OK);
+                Stream blobStream = await blob.OpenReadAsync();
+
+                message.Content = new StreamContent(blobStream);
+                message.Content.Headers.ContentLength = blob.Properties.Length;
+                message.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(blob.Properties.ContentType);
+                message.Content.Headers.ContentDisposition = new System.Net.Http.Headers.ContentDispositionHeaderValue("attachment")
+                {
+                    FileName = filename,
+                    Size = blob.Properties.Length
+                };
+
+                return message;
+            }
+            catch (Exception ex)
+            {
+                log.LogInformation("Error: " + ex.ToString());
+                return null;
+            }
+        }
+        [FunctionName("DownloadProjectPOCTemplate")]
+        public static async Task<HttpResponseMessage> DownloadProjectPOCTemplate([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "DownloadProjectPOCTemplate")] HttpRequest req, ILogger log)
+        {
+            try
+            {
+                string filename = Convert.ToString(req.Query["filename"]);
+                MemoryStream ms = new MemoryStream();
+
+
+
+                var blob = _iazureCommon.GetFileFromCloud(filename, 1);
+
+
+
+                await blob.DownloadToStreamAsync(ms);
+
+
+
+                HttpResponseMessage message = new HttpResponseMessage(HttpStatusCode.OK);
+                Stream blobStream = await blob.OpenReadAsync();
+
+
+
+                message.Content = new StreamContent(blobStream);
+                message.Content.Headers.ContentLength = blob.Properties.Length;
+                message.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(blob.Properties.ContentType);
+                message.Content.Headers.ContentDisposition = new System.Net.Http.Headers.ContentDispositionHeaderValue("attachment")
+                {
+                    FileName = filename,
+                    Size = blob.Properties.Length
+                };
+
+
+
+                return message;
+            }
+            catch (Exception ex)
+            {
+                log.LogInformation("Error: " + ex.ToString());
+                return null;
+            }
+        }
+    }
+}
