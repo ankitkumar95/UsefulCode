@@ -1,0 +1,993 @@
+using System;
+using System.Collections.Generic;
+using System.Data;
+using System.Data.SqlClient;
+using System.Text;
+using System.Threading.Tasks;
+using ACPEmployeeFacility.Model;
+using ACPEmployeeFacility.Core;
+using ACPEmployeeFacility.Interfaces;
+using System.Linq;
+using Microsoft.Extensions.Logging;
+using Microsoft.AspNetCore.Http;
+using Microsoft.WindowsAzure.Storage.Blob;
+using Microsoft.WindowsAzure.Storage;
+using System.IO;
+using System.Net.Http;
+using System.Net.Http.Headers;
+using static ACPEmployeeFacility.Model.Mailmodel;
+using ACPEmployeeFacility.BusinessLogic;
+using static ACPEmployeeFacility.Core.WBSEService;
+using Newtonsoft.Json;
+using System.Net;
+
+namespace ACPEmployeeFacility.Data_Access
+{
+    public class AzureCommon_Data : IAzureCommon
+    {
+        IPOCNotification _IPOCNotification = null;
+        IZeroDemandApproval _iZeroDemandApproval = null;
+        IBizOpsLeadNotification _ibiz = null;
+        private static TimeZoneInfo INDIAN_ZONE = TimeZoneInfo.FindSystemTimeZoneById("India Standard Time");
+        public static string ACPmail = Environment.GetEnvironmentVariable("ACPAPPMail");
+        public static string testMailIds = Environment.GetEnvironmentVariable("TestMailId");
+        udtMailInput tMailInput = new udtMailInput();
+        public static int testMailCheck = Convert.ToInt32(Environment.GetEnvironmentVariable("testMailCheck"));
+        public const string CreateDemandRequest = "DirectLock/CreateDemandRequest";
+        public const string DelinkSeatDetails = "DirectLock/DelinkSeat";
+        public string Logs = Convert.ToString(Environment.GetEnvironmentVariable("IsLog"));
+        public int locFlex = Convert.ToInt32(Environment.GetEnvironmentVariable("locFlex"));
+        static string containerName = Environment.GetEnvironmentVariable("containerName");
+        static string nonAtciProjectContainer = Environment.GetEnvironmentVariable("nonatcicontainer");
+        static string templateContainerName = Environment.GetEnvironmentVariable("templateContainerName");
+        public string UploadFile(string fileName, IFormFile fileData, string action)
+        {
+            try
+            {
+                BlobRequestOptions parallelThreadCountOptions = new BlobRequestOptions();
+                // Allow up to four simultaneous I/O operations.
+                parallelThreadCountOptions.ParallelOperationThreadCount = 4;
+
+                string strBlobConnection = Environment.GetEnvironmentVariable("AZURE_BLOB_CONNECTION_STRING");
+                string connectionString = strBlobConnection;
+
+                CloudStorageAccount storageAccount = CloudStorageAccount.Parse(connectionString);
+                CloudBlobClient serviceClient = storageAccount.CreateCloudBlobClient();
+                CloudBlobContainer container;
+                if (action == Constant.nonatci)
+                {
+                    container = serviceClient.GetContainerReference($"{nonAtciProjectContainer}");
+                }
+                else
+                {
+                    container = serviceClient.GetContainerReference($"{containerName}");
+                }
+
+                CloudBlockBlob blockBlob = container.GetBlockBlobReference(fileName);
+                var task = blockBlob.UploadFromStreamAsync(fileData.OpenReadStream(), accessCondition: null, options: parallelThreadCountOptions, operationContext: null);
+
+                return fileName;
+            }
+            catch (Exception ex)
+            {
+                return "";
+            }
+        }
+        public string UploadFileToBlob(string fileName, Stream stream, string action)
+        {
+            try
+            {
+                BlobRequestOptions parallelThreadCountOptions = new BlobRequestOptions();
+                // Allow up to four simultaneous I/O operations.
+                parallelThreadCountOptions.ParallelOperationThreadCount = 4;
+
+
+
+                string connectionString = Environment.GetEnvironmentVariable("AZURE_BLOB_CONNECTION_STRING");
+
+
+
+                CloudStorageAccount storageAccount = CloudStorageAccount.Parse(connectionString);
+                CloudBlobClient serviceClient = storageAccount.CreateCloudBlobClient();
+                CloudBlobContainer container;
+                if (action == Constant.resourceFacilityError)
+                    container = serviceClient.GetContainerReference($"{containerName}");
+                else
+                    container = serviceClient.GetContainerReference($"{nonAtciProjectContainer}");
+
+                CloudBlockBlob blockBlob = container.GetBlockBlobReference(fileName);
+
+
+
+                var task = blockBlob.UploadFromStreamAsync(stream, accessCondition: null, options: parallelThreadCountOptions, operationContext: null);
+
+
+
+                return fileName;
+            }
+            catch (Exception ex)
+            {
+                return "";
+            }
+
+
+
+        }
+        public CloudBlockBlob GetFileFromCloud(string fileName, int storageCheck)
+        {
+            MemoryStream ms = new MemoryStream();
+            string strBlobConnection = Environment.GetEnvironmentVariable("AZURE_BLOB_CONNECTION_STRING");
+            try
+            {
+                CloudBlobContainer container;
+                if (CloudStorageAccount.TryParse(strBlobConnection, out CloudStorageAccount storageAccount))
+                {
+                    CloudBlobClient BlobClient = storageAccount.CreateCloudBlobClient();
+                    if (storageCheck == 0)
+                    {
+                        container = BlobClient.GetContainerReference(containerName);
+                    }
+                    else if (storageCheck == 1)
+                    {
+                        container = BlobClient.GetContainerReference(templateContainerName);
+                    }
+                    else //3
+                    {
+                        container = BlobClient.GetContainerReference(nonAtciProjectContainer);
+                    }
+                    CloudBlockBlob blob = container.GetBlockBlobReference($"{fileName}");
+                    return blob;
+                }
+                return null;
+            }
+            catch (Exception ex)
+            {
+                return null;
+            }
+        }
+
+        public async Task<string> CreateDemandReq(int AbacusProjectID, string City, string FacilityName, ILogger log)
+        {
+            try
+            {
+                var auth = new Oauth2();
+                var clientId = Convert.ToString(Environment.GetEnvironmentVariable("clientId"));
+                var clientSecret = Convert.ToString(Environment.GetEnvironmentVariable("DataClientSecret"));
+                var scope = Convert.ToString(Environment.GetEnvironmentVariable("Datascope"));
+                string apiUrl = string.Format(Environment.GetEnvironmentVariable("WebApiBaseUrl") + CreateDemandRequest + "?locFlex={0}&AbacusProjectID={1}&City={2}&FacilityName={3}", locFlex, AbacusProjectID, City, FacilityName);
+                var authUrl = Convert.ToString(Environment.GetEnvironmentVariable("OAuthServiceUrl"));
+                var responseBody = auth.GenerateOauth2TokenAggregateData(authUrl, clientId, clientSecret, scope).Result;
+                var oauthToken = responseBody.access_token;
+                using (var client = new HttpClient())
+                {
+                    client.BaseAddress = new Uri(apiUrl);
+                    client.DefaultRequestHeaders.Accept.Clear();
+                    client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("*/*"));
+                    client.DefaultRequestHeaders.Add("Authorization", "bearer " + oauthToken);
+
+                    var response = await client.GetAsync(apiUrl).ConfigureAwait(false);
+                    if (Logs == "true")
+                    {
+                        if (response.IsSuccessStatusCode)
+                        {
+                            log.LogInformation("Demand Request Information:API Call: " + " Success" + response.Content);
+                        }
+                        else
+                        {
+                            log.LogInformation("Demand Request Information:API Call: " + " Fail" + response.Content);
+                        }
+                    }
+                }
+                return Constant.OK;
+
+            }
+            catch (Exception ex)
+            {
+                log.LogError(ex.ToString(), "CreateDemandReq");
+                throw ex;
+            }
+        }
+        public async Task<int> UpdateEMPFacilityMasterDataResolved(int EmployeeFacilityMasterId, string Status)
+        {
+
+
+
+            DataAccess baservice = new DataAccess();
+            string strQuery = @"UPDATE EmployeeFacilityMaster SET ACPStatus ='" + Status + "',updatedDttm = GETDATE(),updatedBy='" + Constant.system + "' WHERE EmployeeFacilityMasterId=@EmployeeFacilityMasterId";
+
+
+
+            SqlParameter employeeFacilityMasterId = new SqlParameter("@EmployeeFacilityMasterId", SqlDbType.Int) { Value = EmployeeFacilityMasterId };
+            SqlParameter[] objPrm = new SqlParameter[1];
+
+
+
+            objPrm[0] = employeeFacilityMasterId;
+
+
+
+            int iResult = await baservice.ExecuteNonQueryAsync(System.Data.CommandType.Text, strQuery, objPrm);
+
+
+
+            return iResult;
+        }
+        public async Task<int> UpdatePROJFacilityMasterIsQualified(int ProjectId, string city, string FacilityName, int IsQualified)
+        {
+
+            DataAccess baservice = new DataAccess();
+            string strQuery = @"UPDATE projectfacilitymaster SET IsQualified ='" + IsQualified + "',updatedDttm = GETDATE(),updatedBy='" + Constant.system + "' WHERE AbacusProjectId=@AbacusProjectId " +
+                "AND City = @City AND FacilityNm = @FacilityNm";
+
+            SqlParameter AbacusProjectId = new SqlParameter("@AbacusProjectId", SqlDbType.Int) { Value = ProjectId };
+            SqlParameter City = new SqlParameter("@City", SqlDbType.VarChar) { Value = city };
+            SqlParameter FacilityNm = new SqlParameter("@FacilityNm", SqlDbType.VarChar) { Value = FacilityName };
+            SqlParameter[] objPrm = new SqlParameter[3];
+
+            objPrm[0] = AbacusProjectId;
+            objPrm[1] = City;
+            objPrm[2] = FacilityNm;
+
+            int iResult = await baservice.ExecuteNonQueryAsync(System.Data.CommandType.Text, strQuery, objPrm);
+
+            return iResult;
+        }
+        public async Task<DataTable> CheckRecordExistInProjFacility(int ProjectId, string city, string FacilityName)
+        {
+
+            DataAccess baservice = new DataAccess();
+            string strQuery = @"SELECT AbacusProjectId,FacilityCd,ProjectNm FROM projectfacilitymaster WHERE AbacusProjectId=@AbacusProjectId " +
+                "AND City = @City AND FacilityNm = @FacilityNm";
+
+            SqlParameter AbacusProjectId = new SqlParameter("@AbacusProjectId", SqlDbType.Int) { Value = ProjectId };
+            SqlParameter City = new SqlParameter("@City", SqlDbType.VarChar) { Value = city };
+            SqlParameter FacilityNm = new SqlParameter("@FacilityNm", SqlDbType.VarChar) { Value = FacilityName };
+            SqlParameter[] objPrm = new SqlParameter[3];
+
+            objPrm[0] = AbacusProjectId;
+            objPrm[1] = City;
+            objPrm[2] = FacilityNm;
+
+            var result = await baservice.GetDataAsync(System.Data.CommandType.Text, strQuery, objPrm);
+            return result;
+        }
+        public async Task<int> InsertPROJFacilityMaster(string ProjName, int ProjectId, string City, string FacilityName, string FacilityCode)
+        {
+            DateTime indianTime = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, INDIAN_ZONE);
+            DataAccess baservice = new DataAccess();
+            string strQuery = @"insert into ProjectFacilityMaster " +
+                                "(ProjectNm,AbacusProjectId,city,FacilityNm,FacilityCd,IsActive,CreatedBy,CreatedDttm,IsQualified,IsSEZ) Values " +
+                                "(@ProjectNm,@AbacusProjectId,@city,@FacilityNm,@FacilityCd,'" + Constant.ActiveStatus + "','" + Constant.CreatedBySystem + "', @UploadedDttm,'" + Constant.isQualifiedOne + "','" + Constant.IsSezZero + "')";
+
+            SqlParameter ProjectNm = new SqlParameter("@ProjectNm", SqlDbType.VarChar) { Value = ProjName };
+            SqlParameter AbacusProjectId = new SqlParameter("@AbacusProjectId", SqlDbType.Int) { Value = ProjectId };
+            SqlParameter city = new SqlParameter("@city", SqlDbType.VarChar) { Value = City };
+            SqlParameter FacilityNm = new SqlParameter("@FacilityNm", SqlDbType.VarChar) { Value = FacilityName };
+            SqlParameter FacilityCd = new SqlParameter("@FacilityCd", SqlDbType.VarChar) { Value = FacilityCode };
+            SqlParameter UploadedDttm = new SqlParameter("@UploadedDttm", SqlDbType.DateTime) { Value = indianTime };
+            SqlParameter[] objPrm = new SqlParameter[6];
+
+            objPrm[0] = ProjectNm;
+            objPrm[1] = AbacusProjectId;
+            objPrm[2] = city;
+            objPrm[3] = FacilityNm;
+            objPrm[4] = FacilityCd;
+            objPrm[5] = UploadedDttm;
+
+            int iResult = await baservice.ExecuteNonQueryAsync(System.Data.CommandType.Text, strQuery, objPrm);
+            return iResult;
+        }
+        public async Task<List<SSOTSeatSLModel>> DelinkSeat(string EnterpriseId, int IsLocFlex, ILogger log)
+        {
+            List<SSOTSeatSLModel> lstSL = new List<SSOTSeatSLModel>();
+            try
+            {
+                var auth = new Oauth2();
+                var clientId = Convert.ToString(Environment.GetEnvironmentVariable("clientId"));
+                var clientSecret = Convert.ToString(Environment.GetEnvironmentVariable("DataClientSecret"));
+                var scope = Convert.ToString(Environment.GetEnvironmentVariable("Datascope"));
+                string apiUrl = string.Format(Environment.GetEnvironmentVariable("WebApiBaseUrl") + DelinkSeatDetails + "?locFlex={0}&EnterpriseId={1}", IsLocFlex, EnterpriseId);
+                var authUrl = Convert.ToString(Environment.GetEnvironmentVariable("OAuthServiceUrl"));
+                var responseBody = auth.GenerateOauth2TokenAggregateData(authUrl, clientId, clientSecret, scope).Result;
+                var oauthToken = responseBody.access_token;
+
+                using (var client = new HttpClient())
+                {
+                    client.BaseAddress = new Uri(apiUrl);
+                    client.DefaultRequestHeaders.Accept.Clear();
+                    client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("*/*"));
+                    client.DefaultRequestHeaders.Add("Authorization", "bearer " + oauthToken);
+
+                    var response = await client.GetAsync(apiUrl).ConfigureAwait(false);
+                    if (Logs == "true")
+                    {
+                        if (response.IsSuccessStatusCode)
+                        {
+                            log.LogInformation("Delink Information:API Call: " + " Success" + response.Content);
+                        }
+                        else
+                        {
+                            log.LogInformation("Delink Information:API Call: " + " Fail" + response.Content);
+                        }
+                    }
+                    var responseWs = new WebServiceResponse
+                    {
+                        StatusCode = response.StatusCode,
+                        ResponseMessage = response.RequestMessage,
+                        Body = await response.Content.ReadAsStringAsync().ConfigureAwait(false)
+                    };
+                    lstSL = JsonConvert.DeserializeObject<List<SSOTSeatSLModel>>(responseWs.Body);
+
+                }
+
+                return lstSL;
+
+            }
+            catch (Exception ex)
+            {
+                log.LogError(ex.ToString(), "DelinkSeat");
+                throw ex;
+            }
+
+        }
+        public async Task<BizopsFinanceMailModel> GetClientMarketName(int AbacusProjectId, ILogger log)
+        {
+            try
+            {
+                BizopsFinanceMailModel objModel = new BizopsFinanceMailModel();
+                _IPOCNotification = new POCNotificationDetails();
+                _iZeroDemandApproval = new ZeroDemandApproval_Data();
+                var resultofProjectId = await _IPOCNotification.GetProjectDetailsId(AbacusProjectId);
+                int ProjId = resultofProjectId[0].projectDetailIds;
+                if (ProjId != 0)
+                {
+                    var resClientMarket = await _iZeroDemandApproval.GetClientMarketDetails(ProjId, log);
+                    objModel.ClientName = resClientMarket.ClientName;
+                    objModel.MarketName = resClientMarket.MarketName;
+                }
+                return objModel;
+            }
+            catch (Exception ex)
+            {
+                log.LogInformation(ex.ToString());
+                throw ex;
+            }
+        }
+        public async Task<string> EscalationBizOpsLeadNotification(string role, string ClientName, string MarketName, string projName, string Location, string FacilityName, ILogger log)
+        {
+            try
+            {
+                int mailResult = 0;
+                string msg = null;
+                string filenameTemplate = null;
+                string TomailList = null;
+                int count = 0;
+                int statusResult = 0;
+                _ibiz = new BizOpsNotificationDetails();
+                List<BizOpsNotificationModel> objEnterpriseIds = new List<BizOpsNotificationModel>();
+
+                if (role == Constant.bizOpsRole)
+                {
+                    objEnterpriseIds = await _ibiz.GetBizOpsLeadDetails();
+                    if (Logs == "true")
+                    {
+                        if (objEnterpriseIds.Count > 0)
+                        {
+                            string jsonList = JsonConvert.SerializeObject(objEnterpriseIds, Formatting.Indented);
+                            log.LogInformation("Information:Get records from Method GetBizOpsLeadDetails(): " + jsonList);
+                            log.LogInformation("Information:Get records from Method GetBizOpsLeadDetails(): " + objEnterpriseIds.Count);
+                        }
+                        else
+                        {
+                            log.LogInformation("Information:Get records from Method GetBizOpsLeadDetails(): " + " Fail");
+                        }
+                    }
+                    TomailList = string.Join(";", objEnterpriseIds.Select(x => x.EmailID.ToString()).ToArray());
+                }
+                else
+                {
+                    objEnterpriseIds = await _ibiz.GetFinanceLeadDetails();
+                    if (Logs == "true")
+                    {
+                        if (objEnterpriseIds.Count > 0)
+                        {
+                            string jsonList = JsonConvert.SerializeObject(objEnterpriseIds, Formatting.Indented);
+                            log.LogInformation("Information:Get records from Method GetFinanceLeadDetails(): " + jsonList);
+                            log.LogInformation("Information:Get records from Method GetFinanceLeadDetails(): " + objEnterpriseIds.Count);
+                        }
+                        else
+                        {
+                            log.LogInformation("Information:Get records from Method GetFinanceLeadDetails(): " + " Fail");
+                        }
+                    }
+                    TomailList = string.Join(";", objEnterpriseIds.Select(x => x.EmailID.ToString()).ToArray());
+                }
+
+                if (objEnterpriseIds.Count > 0)
+                {
+                    if (role == Constant.bizOpsRole)
+                    {
+                        filenameTemplate = "bizopsMailTemplate.txt";
+                    }
+                    else
+                    {
+                        filenameTemplate = "FinanceMailTemplate.txt";
+                    }
+                    var input = _ibiz.GetBlob(filenameTemplate);
+                    var strTo = TomailList;
+                    StringBuilder mailBody = new StringBuilder();
+                    mailBody.Append(input);
+                    mailBody.Replace("@*Client@", ClientName);
+                    mailBody.Replace("@*Market@", MarketName);
+                    mailBody.Replace("@*ProjectName@", projName);
+                    mailBody.Replace("@*Location@", Location);
+                    mailBody.Replace("@*Facility@", FacilityName);
+                    mailBody.ToString();
+                    string mailRes = mailBody.ToString();
+                    string toMailId = strTo;
+                    string CCMailId = "";
+                    string strFromMailId = null;
+                    if (strFromMailId == null)
+                    {
+                        strFromMailId = ACPmail;
+                    }
+                    string strToMailID = toMailId;
+                    string strMailBody = string.Empty;
+                    strMailBody = mailRes;
+                    tMailInput.cMailFrom = strFromMailId;
+                    if (testMailCheck == 0)
+                    {
+                        tMailInput.cMailTo = strToMailID;
+                    }
+                    else
+                    {
+                        tMailInput.cMailTo = testMailIds;
+                    }
+                    tMailInput.cMailCC = CCMailId;
+                    tMailInput.cMailBCC = "";
+                    tMailInput.cMailBody = strMailBody;
+                    if (role == Constant.bizOpsRole)
+                    {
+                        tMailInput.cMailSubject = Constant.mailSubjectBizops;
+                    }
+                    else
+                    {
+                        tMailInput.cMailSubject = Constant.mailSubjectFinance;
+                    }
+
+                    mailResult = await _ibiz.SendAlertMail(tMailInput, log);
+
+                    if (mailResult == 1)
+                    {
+                        if (role == Constant.bizOpsRole)
+                        {
+                            if (Logs == "true")
+                            {
+                                log.LogInformation("Information:Mail Triggered to BizOps : " + " Success");
+                            }
+                            DataTable datarows = await _ibiz.SelectBizOpsNotificationStatus(projName, Location, FacilityName);
+                            count = Convert.ToInt32(datarows.Rows[0]["counts"]);
+                            if (count > 0)
+                            {
+                                 statusResult = await _ibiz.UpdateBizOpsMailSentDate(projName, Location, FacilityName);
+                            }
+                        }
+                        else
+                        {
+                            if (Logs == "true")
+                            {
+                                log.LogInformation("Information:Mail Triggered to Finance : " + " Success");
+                            }
+                            DataTable datarows = await _ibiz.SelectFinanceNotificationStatus(projName, Location, FacilityName);
+                            count = Convert.ToInt32(datarows.Rows[0]["counts"]);
+                            if (count > 0)
+                            {
+                                statusResult = await _ibiz.UpdateFinanceMailSentDate(projName, Location, FacilityName);
+                            }
+                        }
+
+                    }
+                    if (mailResult == 1)
+                    {
+                        msg = "Success";
+                        return msg;
+                    }
+                    else
+                    {
+                        msg = "Failure";
+                        return msg;
+                    }
+                }
+                return msg;
+            }
+            catch (Exception ex)
+            {
+                log.LogInformation(ex.ToString());
+                throw ex;
+            }
+        }
+        public async Task<string> MailToPocByAutoSeatRelease(ILogger log, int AcpProjectID, string EnterpriseId, string SeatNo, string Project, string Location)
+        {
+            try
+            {
+                int count = 0;
+                int mailResult = 0;
+                string enterPriseID = string.Empty;
+                int projectId = 0;
+                int statusResult = 0;
+                List<BizOpsNotificationModel> objProjectDetailsId = new List<BizOpsNotificationModel>();
+                List<BizOpsNotificationModel> objPocIds = new List<BizOpsNotificationModel>();
+                _ibiz = new BizOpsNotificationDetails();
+                objProjectDetailsId = await _ibiz.GetProjectDetailsId(AcpProjectID);
+                if (objProjectDetailsId != null && objProjectDetailsId.Count > 0)
+                {
+                    string prDetailId = string.Join(",", objProjectDetailsId.Select(x => x.projectDetailIds).ToArray());
+
+                    objPocIds = await _ibiz.GetPOCDetails(prDetailId);
+
+                    string pocList = string.Join(";", objPocIds.Select(x => x.EmailID.ToString()).ToArray());
+
+                    if (objPocIds.Count > 0)
+                    {
+                        string filenameTemplate = "POCMailBySeatRelease.txt";
+                        var input = _ibiz.GetBlob(filenameTemplate);
+
+                        var strTo = pocList;
+                        StringBuilder mailBody = new StringBuilder();
+                        mailBody.Append(input);
+                        mailBody.Replace("@*EnterpriseID@", EnterpriseId);
+                        mailBody.Replace("@*SeatNO@", SeatNo);
+                        mailBody.Replace("@*Location@", Location);
+                        mailBody.Replace("@*Project@", Project);
+                        mailBody.ToString();
+                        string mailRes = mailBody.ToString();
+
+                        string strFromMailId = ACPmail;
+                        if (strFromMailId == null)
+                        {
+                            strFromMailId = Constant.fromMail + Constant.domain;
+                        }
+                        if (testMailIds == null)
+                        {
+                            testMailIds = Constant.ToMail;
+                        }
+                        string strToMailID = strTo;
+                        string strMailBody = string.Empty;
+                        strMailBody = mailRes;
+
+                        tMailInput.cMailFrom = strFromMailId;
+                        if (testMailCheck == 0)
+                        {
+                            tMailInput.cMailTo = strToMailID;
+                        }
+                        else
+                        {
+                            tMailInput.cMailTo = testMailIds;
+                        }
+                        tMailInput.cMailCC = "";
+                        tMailInput.cMailBCC = "";
+
+                        tMailInput.cMailBody = strMailBody;
+                        tMailInput.cMailSubject = Constant.POCSoftLockSubject;
+
+                        mailResult = await _ibiz.SendAlertMail(tMailInput, log);
+                    }
+
+
+                }
+                if (mailResult == 1)
+                {
+                    return Constant.SUCCESS;
+                }
+                else
+                {
+                    return Constant.FAILURE;
+                }
+            }
+            catch (Exception ex)
+            {
+                throw ex;
+            }
+
+        }
+
+        public async Task<string> MailToPocByAutoSeatReleaseGCP(ILogger log, int AcpProjectID, string EnterpriseId, string SeatNo, string Project, string Location)
+        {
+            try
+            {
+                int count = 0;
+                int mailResult = 0;
+                string enterPriseID = string.Empty;
+                int projectId = 0;
+                int statusResult = 0;
+                List<BizOpsNotificationModel> objProjectDetailsId = new List<BizOpsNotificationModel>();
+                List<BizOpsNotificationModel> objPocIds = new List<BizOpsNotificationModel>();
+                _ibiz = new BizOpsNotificationDetails();
+                objProjectDetailsId = await _ibiz.GetProjectDetailsId(AcpProjectID);
+                if (objProjectDetailsId != null && objProjectDetailsId.Count > 0)
+                {
+                    string prDetailId = string.Join(",", objProjectDetailsId.Select(x => x.projectDetailIds).ToArray());
+
+                    objPocIds = await _ibiz.GetPOCDetails(prDetailId);
+
+                    string pocList = string.Join(";", objPocIds.Select(x => x.EmailID.ToString()).ToArray());
+
+                    if (objPocIds.Count > 0)
+                    {
+                        string filenameTemplate = "GCPPOCMail.txt";
+                        var input = _ibiz.GetBlob(filenameTemplate);
+
+                        var strTo = pocList;
+                        StringBuilder mailBody = new StringBuilder();
+                        mailBody.Append(input);
+                        mailBody.Replace("@*EnterpriseID@", EnterpriseId);
+                        mailBody.Replace("@*SeatNO@", SeatNo);
+                        mailBody.Replace("@*Location@", Location);
+                        mailBody.Replace("@*Project@", Project);
+                        mailBody.ToString();
+                        string mailRes = mailBody.ToString();
+
+                        string strFromMailId = ACPmail;
+                        if (strFromMailId == null)
+                        {
+                            strFromMailId = Constant.fromMail + Constant.domain;
+                        }
+                        if (testMailIds == null)
+                        {
+                            testMailIds = Constant.ToMail;
+                        }
+                        string strToMailID = strTo;
+                        string strMailBody = string.Empty;
+                        strMailBody = mailRes;
+
+                        tMailInput.cMailFrom = strFromMailId;
+                        if (testMailCheck == 0)
+                        {
+                            tMailInput.cMailTo = strToMailID;
+                        }
+                        else
+                        {
+                            tMailInput.cMailTo = testMailIds;
+                        }
+                        tMailInput.cMailCC = "";
+                        tMailInput.cMailBCC = "";
+
+                        tMailInput.cMailBody = strMailBody;
+                        tMailInput.cMailSubject = Constant.GCPPOCHardLockSubject;
+
+                        mailResult = await _ibiz.SendAlertMail(tMailInput, log);
+                    }
+
+
+                }
+                if (mailResult == 1)
+                {
+                    return Constant.SUCCESS;
+                }
+                else
+                {
+                    return Constant.FAILURE;
+                }
+            }
+            catch (Exception ex)
+            {
+                log.LogError(ex.ToString(), "MailToPocByAutoSeatReleaseGCP");
+                throw ex;
+            }
+
+        }
+
+
+        public async Task<SiteModel> GetSiteByFacilityNm(string FacilityNm, ILogger log)
+        {
+            SiteModel objList = new SiteModel();
+            string apiUrl = string.Format(Environment.GetEnvironmentVariable("GetSiteByFacilityNm") + "?FacilityNm={0}", FacilityNm);
+
+            Uri myUri = new Uri(apiUrl, UriKind.Absolute);
+            using (var client = new WebClient())
+            {
+                //token Insert
+                JwtToken.InjectJwtToken(client);
+                var response = await client.DownloadStringTaskAsync(myUri);
+                if (!string.IsNullOrEmpty(response))
+                {
+                    objList = JsonConvert.DeserializeObject<SiteModel>(response);
+                }
+            }
+            return objList;
+        }
+
+        // Code for update unresolved
+        public async Task<DataTable> GetFacilityName(int AbacusProjID, string City, ILogger log)
+        {
+            try
+            {
+                DataAccess baservice = new DataAccess();
+                string strQuery = @"SELECT FacilityNm FROM EmployeeFacilityMaster WHERE AbacusProjectID=@AbacusProjectID " +
+               "And city = @city AND ACPStatus = '" + Constant.PendingApproval + "' ";
+
+                SqlParameter AbacusProjectID = new SqlParameter("@AbacusProjectID", SqlDbType.Int) { Value = AbacusProjID };
+                SqlParameter city = new SqlParameter("@city", SqlDbType.VarChar) { Value = City };
+                SqlParameter[] objPrm = new SqlParameter[2];
+
+                objPrm[0] = AbacusProjectID;
+                objPrm[1] = city;
+
+                var iResult = await baservice.GetDataAsync(System.Data.CommandType.Text, strQuery, objPrm);
+                return iResult;
+            }
+            catch (Exception ex)
+            {
+                log.LogError(ex.ToString(), "CreateDemandReq");
+                throw ex;
+            }
+        }
+
+        public async Task<int> UpdateEMPFacilityMasterDataUnResolved(int AbacusProjID, string City, string Status, ILogger log)
+        {
+            try
+            {
+                DataAccess baservice = new DataAccess();
+
+                string strQuery = @"UPDATE EmployeeFacilityMaster SET ACPStatus ='" + Status + "',updatedDttm = GETDATE(),updatedBy='" + Constant.system + "' WHERE AbacusProjectID=@AbacusProjectID " +
+                "And city = @city AND ACPStatus = '" + Constant.PendingApproval + "'";
+
+                SqlParameter AbacusProjectID = new SqlParameter("@AbacusProjectID", SqlDbType.Int) { Value = AbacusProjID };
+                SqlParameter city = new SqlParameter("@city", SqlDbType.VarChar) { Value = City };
+                SqlParameter[] objPrm = new SqlParameter[2];
+
+                objPrm[0] = AbacusProjectID;
+                objPrm[1] = city;
+
+                int iResult = await baservice.ExecuteNonQueryAsync(System.Data.CommandType.Text, strQuery, objPrm);
+                return iResult;
+            }
+            catch (Exception ex)
+            {
+                log.LogError(ex.ToString(), "CreateDemandReq");
+                throw ex;
+            }
+        }
+        public async Task<int> UpdatePROJFacilityMasterIsQualifiedZero(int ProjectId, string city, string FacilityName, int IsQualified)
+        {
+
+            DataAccess baservice = new DataAccess();
+            string strQuery = @"UPDATE projectfacilitymaster SET IsQualified ='" + IsQualified + "',updatedDttm = GETDATE(),updatedBy='" + Constant.system + "' WHERE AbacusProjectId=@AbacusProjectId " +
+                "AND City = @City AND FacilityNm = @FacilityNm And IsQualified in ('" + Constant.IsQualifiedBizOPs + "' , '" + Constant.IsQualifiedFinance + "') ";
+
+            SqlParameter AbacusProjectId = new SqlParameter("@AbacusProjectId", SqlDbType.Int) { Value = ProjectId };
+            SqlParameter City = new SqlParameter("@City", SqlDbType.VarChar) { Value = city };
+            SqlParameter FacilityNm = new SqlParameter("@FacilityNm", SqlDbType.VarChar) { Value = FacilityName };
+            SqlParameter[] objPrm = new SqlParameter[3];
+
+            objPrm[0] = AbacusProjectId;
+            objPrm[1] = City;
+            objPrm[2] = FacilityNm;
+
+            int iResult = await baservice.ExecuteNonQueryAsync(System.Data.CommandType.Text, strQuery, objPrm);
+
+            return iResult;
+        }
+
+        public async Task<List<SiteModel>> GetFacilityBySite(string site, ILogger log)
+        {
+            List<SiteModel> objList = new List<SiteModel>();
+            string apiUrl = string.Format(Environment.GetEnvironmentVariable("GetFacilityNmsBySite") + "?site={0}", site);
+
+            Uri myUri = new Uri(apiUrl, UriKind.Absolute);
+            using (var client = new WebClient())
+            {
+                //token Insert
+                JwtToken.InjectJwtToken(client);
+                var response = await client.DownloadStringTaskAsync(myUri);
+                if (!string.IsNullOrEmpty(response))
+                {
+                    objList = JsonConvert.DeserializeObject<List<SiteModel>>(response);
+                }
+            }
+            return objList;
+        }
+
+        public async Task<DataTable> CheckProjectClassification(int AbacusProjectID, string city, ILogger log)
+        {
+            try
+            {
+                DataAccess baservice = new DataAccess();
+                string strQuery = @"SELECT IsIDB FROM ProjectIDBMapping WHERE AbacusProjectID = '" + AbacusProjectID + "' and LocationNm = @City ";
+
+                SqlParameter City = new SqlParameter("@City", SqlDbType.VarChar) { Value = city };
+                SqlParameter[] objPrm = new SqlParameter[1];
+
+                objPrm[0] = City;
+                var iResult = await baservice.GetDataAsync(System.Data.CommandType.Text, strQuery, objPrm);
+                return iResult;
+
+
+            }
+            catch (Exception ex)
+            {
+                log.LogError(ex.ToString(), "ProjectIDBMapping");
+                throw ex;
+            }
+        }
+        public async Task<int> UpdateProjectClass(int AbacusProjectID, string city, string idbVal, ILogger log)
+        {
+            try
+            {
+                DataAccess baservice = new DataAccess();
+                string query = "update projectfacilitymaster set isIDB ='" + idbVal + "' where AbacusProjectId=@ProjectId and City = @City";
+                SqlParameter ProjectId = new SqlParameter("@ProjectId", SqlDbType.Int) { Value = AbacusProjectID };
+                SqlParameter City = new SqlParameter("@City", SqlDbType.VarChar) { Value = city };
+                SqlParameter[] objParams = new SqlParameter[2];
+                objParams[0] = ProjectId;
+                objParams[1] = City;
+
+                int res = await baservice.ExecuteNonQueryAsync(System.Data.CommandType.Text, query, objParams);
+                return res;
+            }
+            catch (Exception ex)
+            {
+                log.LogError(ex.ToString(), "UpdateClassificationTypeInProjectFacilityMaster");
+                throw ex;
+            }
+        }
+
+
+        public async Task<DataTable> CheckRecordIsSEZ(int AbacusProjId, string facilityNm)
+        {
+            DataAccess daservice = new DataAccess();
+            string Query = "SELECT IsSEZ FROM ProjectFacilityMaster where AbacusProjectId= @AbacusProjectId and FacilityNm = @FacilityNm ";
+
+            SqlParameter AbacusProjectId = new SqlParameter("@AbacusProjectId", SqlDbType.Int) { Value = AbacusProjId };
+            SqlParameter FacilityNm = new SqlParameter("@FacilityNm", SqlDbType.VarChar) { Value = facilityNm };
+            SqlParameter[] objParams = new SqlParameter[2];
+            objParams[0] = AbacusProjectId;
+            objParams[1] = FacilityNm;
+            var resEmp = await daservice.GetDataAsync(System.Data.CommandType.Text, Query, objParams);
+            return resEmp;
+        }
+
+        public async Task<string> MailToPocByAutoSeatReleaseForResignEmp(ILogger log, int AcpProjectID, string EnterpriseId, string SeatNo, string Project, string Location)
+        {
+            try
+            {
+                int count = 0;
+                int mailResult = 0;
+                string enterPriseID = string.Empty;
+                int projectId = 0;
+                int statusResult = 0;               
+                List<BizOpsNotificationModel> objProjectDetailsId = new List<BizOpsNotificationModel>();
+                List<BizOpsNotificationModel> objPocIds = new List<BizOpsNotificationModel>();
+                _ibiz = new BizOpsNotificationDetails();
+                objProjectDetailsId = await _ibiz.GetProjectDetailsId(AcpProjectID);
+                if (objProjectDetailsId != null && objProjectDetailsId.Count > 0)
+                {
+                    string prDetailId = string.Join(",", objProjectDetailsId.Select(x => x.projectDetailIds).ToArray());
+
+                    objPocIds = await _ibiz.GetPOCDetails(prDetailId);
+
+                    string pocList = string.Join(";", objPocIds.Select(x => x.EmailID.ToString()).ToArray());
+
+                    if (objPocIds.Count > 0)
+                    {
+                        string filenameTemplate = "POCMailBySeatReleaseResignEmp.txt";
+                        var input = _ibiz.GetBlob(filenameTemplate);
+
+                        var strTo = pocList;
+                        StringBuilder mailBody = new StringBuilder();
+                        mailBody.Append(input);
+                        mailBody.Replace("@*EnterpriseID@", EnterpriseId);
+                        mailBody.Replace("@*SeatNO@", SeatNo);
+                        mailBody.ToString();
+                        string mailRes = mailBody.ToString();
+
+                        string strFromMailId = ACPmail;
+                        log.LogInformation("strFromMailId 1-" + strFromMailId);
+                        if (strFromMailId == null)
+                        {
+                            strFromMailId = Constant.fromMail + Constant.domain;
+                        }
+                        log.LogInformation("strFromMailId 2-" + strFromMailId);
+                        if (testMailIds == null)
+                        {
+                            testMailIds = Constant.ToMail;
+                        }
+                        string strToMailID = strTo;
+                        string strMailBody = string.Empty;
+                        strMailBody = mailRes;
+                        tMailInput.cMailFrom = strFromMailId;
+                        if (testMailCheck == 0)
+                        {
+                            tMailInput.cMailTo = strToMailID;
+                        }
+                        else
+                        {
+                            tMailInput.cMailTo = testMailIds;
+                        }
+                        tMailInput.cMailCC = "";
+                        tMailInput.cMailBCC = "";
+
+                        tMailInput.cMailBody = strMailBody;
+                        tMailInput.cMailSubject = Constant.POCHardLockSubject;
+                        mailResult = await _ibiz.SendAlertMail(tMailInput, log);
+                    }
+
+
+                }
+                if (mailResult == 1)
+                {
+                    return Constant.SUCCESS;
+                }
+                else
+                {
+                    return Constant.FAILURE;
+                }
+            }
+            catch (Exception ex)
+            {
+                throw ex;
+            }
+
+        }
+        public async Task<List<SsoftBaseReportModel>> GetListOffFilesFromBlob()
+        {
+            string strBlobConnection = Environment.GetEnvironmentVariable("AZURE_BLOB_CONNECTION_STRING");
+            string atciContainerName = Environment.GetEnvironmentVariable("AtcicontainerName");
+            int CheckLimit = Convert.ToInt32(Environment.GetEnvironmentVariable("Limit"));
+            try
+            {
+                List<string> lstBlob = new List<string>();
+                CloudBlobContainer container;
+                BlobContinuationToken continuationToken = null;
+                if (CloudStorageAccount.TryParse(strBlobConnection, out CloudStorageAccount storageAccount))
+                {
+                    CloudBlobClient BlobClient = storageAccount.CreateCloudBlobClient();
+
+                    container = BlobClient.GetContainerReference(atciContainerName);
+                    var blobResultSegment = await container.ListBlobsSegmentedAsync(continuationToken);
+                    IEnumerable<IListBlobItem> blobItems = blobResultSegment.Results;
+                    List<SsoftBaseReportModel> fileUris = new List<SsoftBaseReportModel>();
+
+                    foreach (var blobItem in blobItems)
+                    {
+                        SsoftBaseReportModel objssoft = new SsoftBaseReportModel();
+                        objssoft.FileName = blobItem.Uri.Segments.Last().ToString();
+                        fileUris.Add(objssoft);
+                    }
+                    fileUris = fileUris.OrderByDescending(x => x.FileName).Take(CheckLimit).ToList();
+                    return fileUris;
+                }
+                return null;
+            }
+            catch (Exception ex)
+            {
+                return null;
+            }
+        }
+        public CloudBlockBlob GetSelectedFileFromCloud(string fileName)
+        {
+            MemoryStream ms = new MemoryStream();
+            string strBlobConnection = Environment.GetEnvironmentVariable("AZURE_BLOB_CONNECTION_STRING");
+            string atciContainerName = Environment.GetEnvironmentVariable("AtcicontainerName");
+            try
+            {
+                CloudBlobContainer container;
+                if (CloudStorageAccount.TryParse(strBlobConnection, out CloudStorageAccount storageAccount))
+                {
+                    CloudBlobClient BlobClient = storageAccount.CreateCloudBlobClient();
+                    container = BlobClient.GetContainerReference(atciContainerName);
+
+                    CloudBlockBlob blob = container.GetBlockBlobReference($"{fileName}");
+                    return blob;
+                }
+                return null;
+            }
+            catch (Exception ex)
+            {
+                return null;
+            }
+        }
+
+
+    }
+}
