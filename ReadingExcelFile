@@ -1,0 +1,2526 @@
+
+//using ExcelDataReader;
+//using ACPEmployeeFacility.Core.ErrorLogs;
+using Microsoft.AspNetCore.Http;
+using System;
+using System.Collections.Generic;
+using System.Data;
+using System.Data.SqlClient;
+using System.IO;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+using ACPEmployeeFacility.Model;
+using ACPEmployeeFacility.Core;
+using ACPEmployeeFacility.BusinessLogic;
+using System.Net;
+using Newtonsoft.Json;
+using ACPEmployeeFacility.Interfaces;
+using ExcelDataReader;
+using Microsoft.Extensions.Logging;
+using System.Globalization;
+using System.Net.Http;
+using System.Threading;
+using System.Security.Cryptography;
+
+namespace ACPEmployeeFacility
+{
+    public class EmployeeFacilityHelper
+    {
+        public static bool IsMultipleQualifiedFacilitiesApplicable = Convert.ToBoolean(Environment.GetEnvironmentVariable("IsMultipleQualifiedFacilitiesApplicable"));
+        public static int AutomateIDBupdate = Convert.ToInt32(Environment.GetEnvironmentVariable("AutomateIDBupdate"));
+        public readonly IEmployeeFacilityHelper _iemployeeFacilityHelper = null;
+        public readonly IAzureCommon _iazureCommon = null;
+        public static BizOpsNotificationDetails lBizops = new BizOpsNotificationDetails();
+        public static IBizOpsLeadNotification _ibiz = lBizops;
+        public string Logs = Convert.ToString(Environment.GetEnvironmentVariable("IsLog"));
+        public const string FnSendMessageEF = "SendMessageEmpTag";
+        public const string FnSendMessageDemand = "SendMessageDemand";
+        public const string FnSendMessagePocUpload = "SendMessagePocUpload";
+        public static int chunkLimit = Convert.ToInt32(Environment.GetEnvironmentVariable("chunkLimit"));
+        public EmployeeFacilityHelper()
+        {
+
+        }
+        public EmployeeFacilityHelper(IEmployeeFacilityHelper iemployeeFacilityHelper)
+        {
+            this._iemployeeFacilityHelper = iemployeeFacilityHelper;
+        }
+        public EmployeeFacilityHelper(IEmployeeFacilityHelper iemployeeFacilityHelper, IAzureCommon iazureCommon)
+        {
+            this._iemployeeFacilityHelper = iemployeeFacilityHelper;
+            this._iazureCommon = iazureCommon;
+        }
+        ErrorLog errorLog = new ErrorLog();
+        DataAccess baseService = new DataAccess();
+        public static ImportEmployeedataDetails employeedata = new ImportEmployeedataDetails();
+        public static IImportEmployeedata _iemployeedata = employeedata;
+        ImportEmployeedata objDAL = new ImportEmployeedata(_iemployeedata);
+        public static EmployeeFacilityMappingDetails employeemappingdetails = new EmployeeFacilityMappingDetails();
+        public static IEmployeeFacilityMapping _iemployeefacilitymapping = employeemappingdetails;
+        BizOpsNotification bizops = new BizOpsNotification(_ibiz);
+
+        public const string FnSendEnterpriseIdForSNOW = "FnSendEnterpriseIdForSNOW";
+        public async Task<object> ValidateExcelFile(HttpRequest req, ILogger log, string inputEntity)
+        {
+            ErrorModel Uploddatarow = new ErrorModel();
+            DataAccess baseService = new DataAccess();
+            string Message = string.Empty;
+            string uploadby = Convert.ToString(req.Query["uploadby"]);
+
+            string EnterpriseId = Constant.lEnterpriseId;
+            string FacilityNm = Constant.lFacilityName;
+            string HeadersequenceError = Constant.lHeaderssequence;
+            string DataCountInExcelError = Constant.ldatacountinexcel;
+            string FileuploadSuccessMessage = Constant.lfileuploadProcessMessage;
+            string FileLength = Constant.lfilelength;
+            string Entity = Constant.Entity;
+            string Project = Constant.Project;
+            string ProjectCd = Constant.ProjectCd;
+            string poc = Constant.poc;
+            string sdl = Constant.sdl;
+            int fileid = 0;
+
+            List<EmployeeInputDump> lstEmployeeInputDumpDetails = new List<EmployeeInputDump>();
+            try
+            {
+                IFormFile file = req.Form.Files[0];
+                int DataSourceId = Convert.ToInt32(req.Query["datasourceid"]);
+                if (file != null)
+                {
+                    if (file.Length > 0)
+                    {
+                        System.Text.Encoding.RegisterProvider(System.Text.CodePagesEncodingProvider.Instance);
+                        Stream stream = file.OpenReadStream();
+                        IExcelDataReader reader = null;
+                        if (file.FileName.EndsWith(".xlsx"))
+                        {
+                            reader = ExcelReaderFactory.CreateOpenXmlReader(stream);
+                        }
+                        else
+                        {
+                            return new Responce
+                            { Status = "Error", Message = HeadersequenceError };
+                        }
+                        var conf = new ExcelDataSetConfiguration()
+                        {
+                            ConfigureDataTable = (tableReader) => new ExcelDataTableConfiguration()
+                            {
+                                UseHeaderRow = true
+                            }
+                        };
+                        DataSet excelRecords = reader.AsDataSet(conf);
+                        reader.Read();
+                        reader.Close();
+                        if (inputEntity == Constant.atci)
+                        {
+                            for (int j = 0; j < excelRecords.Tables[0].Columns.Count; j++)
+                            {
+                                if (j >= 5 && !string.Equals(excelRecords.Tables[0].Columns[j].ColumnName.ToString(), (j - 4).ToString(), StringComparison.InvariantCultureIgnoreCase)
+                                      || (j == 4 && !string.Equals(excelRecords.Tables[0].Columns[4].ColumnName.ToString(), FacilityNm, StringComparison.InvariantCultureIgnoreCase))
+                                      || (j == 3 && !string.Equals(excelRecords.Tables[0].Columns[3].ColumnName.ToString(), Project, StringComparison.InvariantCultureIgnoreCase))
+                                      || (j == 2 && !string.Equals(excelRecords.Tables[0].Columns[2].ColumnName.ToString(), ProjectCd, StringComparison.InvariantCultureIgnoreCase))
+                                      || (j == 1 && !string.Equals(excelRecords.Tables[0].Columns[1].ColumnName.ToString(), Entity, StringComparison.InvariantCultureIgnoreCase))
+                                      || (j == 0 && !string.Equals(excelRecords.Tables[0].Columns[0].ColumnName.ToString(), EnterpriseId, StringComparison.InvariantCultureIgnoreCase))
+                                      || excelRecords.Tables[0].Columns.Count < 4)
+                                {
+                                    return new Responce
+                                    { Status = "Error", Message = HeadersequenceError };
+                                }
+
+                            }
+                            Uploddatarow.UploadType = Constant.ResourceFacility;
+                        }
+                        else if (inputEntity == Constant.nonatci) // for non atci resource update change is req
+                        {
+                            for (int j = 0; j < excelRecords.Tables[0].Columns.Count; j++)
+                            {
+                                if (j >= 5 && !string.Equals(excelRecords.Tables[0].Columns[j].ColumnName.ToString(), (j - 4).ToString(), StringComparison.InvariantCultureIgnoreCase)
+                                      || (j == 4 && !string.Equals(excelRecords.Tables[0].Columns[4].ColumnName.ToString(), sdl, StringComparison.InvariantCultureIgnoreCase))
+                                      || (j == 3 && !string.Equals(excelRecords.Tables[0].Columns[3].ColumnName.ToString(), poc, StringComparison.InvariantCultureIgnoreCase))
+                                      || (j == 2 && !string.Equals(excelRecords.Tables[0].Columns[2].ColumnName.ToString(), ProjectCd, StringComparison.InvariantCultureIgnoreCase))
+                                      || (j == 1 && !string.Equals(excelRecords.Tables[0].Columns[1].ColumnName.ToString(), Project, StringComparison.InvariantCultureIgnoreCase))
+                                      || (j == 0 && !string.Equals(excelRecords.Tables[0].Columns[0].ColumnName.ToString(), Entity, StringComparison.InvariantCultureIgnoreCase))
+                                      || excelRecords.Tables[0].Columns.Count < 5)
+                                {
+                                    return new Responce
+                                    { Status = "Error", Message = HeadersequenceError };
+                                }
+                            }
+                            Uploddatarow.UploadType = Constant.ProjectPOC;
+                        }
+                        var finalRecords = excelRecords.Tables[0];
+                        if (finalRecords.Rows.Count == 0)
+                        {
+                            return new Responce
+                            { Status = "Error", Message = DataCountInExcelError };
+                        }
+                        else if (finalRecords.Rows.Count > 5000) //pending count
+                        {
+                            return new Responce
+                            { Status = "Error", Message = Constant.ErroeMessageMaxrows };
+                        }
+                        else
+                        {
+                            Uploddatarow.RecordsCount = finalRecords.Rows.Count;
+                            Uploddatarow.Filenames = file.FileName;
+                            Uploddatarow.UploadeBy = uploadby;
+
+                            fileid = await InsertUploaddata(Uploddatarow);
+
+                            int iResult = await _iemployeeFacilityHelper.UpdateUploadFileStatus(fileid, Constant.Progress);
+                            log.LogInformation("File Success");
+                            return new Responce
+                            { Status = "Success", Message = FileuploadSuccessMessage, Fileid = fileid };
+                        }
+                    }
+                    else
+                    {
+                        return new Responce
+                        { Status = "Error", Message = FileLength };
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                log.LogInformation("Error: " + ex.ToString());
+                return ex.ToString();
+            }
+            return new Responce
+            { Status = "Success", Message = FileuploadSuccessMessage, Fileid = fileid };
+        }
+        public async Task<object> ProcessFileUpload(HttpRequest req, ILogger log)
+        {
+            List<AcpProjectIdModel> acpProjectList = await GetAcpProjectIds(log);
+            DataAccess baseService = new DataAccess();
+            string Message = string.Empty;
+            string uploadby = Convert.ToString(req.Query["uploadby"]);
+            IFormFile file = req.Form.Files[0];
+            String fileName = file.FileName;
+            int DataSourceId = Convert.ToInt32(req.Query["datasourceid"]);
+            Stream stream = file.OpenReadStream();
+            IExcelDataReader reader = null;
+            int Fileid = Convert.ToInt32(req.Query["Fileid"]);
+            string FileuploadSuccessMessage = Constant.lfileuploadsuccessMessage;
+            int iresult = 0;
+            string cityName = string.Empty;
+            int locId;
+            string facilityCd = string.Empty;
+            List<EmployeeInputDump> lstEmployeeInputDumpDetails = new List<EmployeeInputDump>();
+            if (file.FileName.EndsWith(".xlsx"))
+            {
+                reader = ExcelReaderFactory.CreateOpenXmlReader(stream);
+            }
+            var conf = new ExcelDataSetConfiguration()
+            {
+                ConfigureDataTable = (tableReader) => new ExcelDataTableConfiguration()
+                {
+                    UseHeaderRow = true //THIS IS WHAT YOU ARE AFTER
+                }
+            };
+            DataSet excelRecords = reader.AsDataSet(conf);
+            reader.Read();
+            reader.Close();
+            var finalRecords = excelRecords.Tables[0];
+
+            if (finalRecords.Rows.Count > 0)
+            {
+                try
+                {
+                    int iresultError = 0;
+                    string fileNM = _iazureCommon.UploadFile(fileName, file, string.Empty);
+
+                    string err_msg = string.Empty;
+                    string ischeck = string.Empty;
+                    List<FacilityLeadApprovalModel> lstLeadApproval = new List<FacilityLeadApprovalModel>();
+                    lstLeadApproval = await getFacilityLeadApproval();
+                    List<AllLocationModel> lstLocation = new List<AllLocationModel>();
+                    lstLocation = await GetAllLocations();
+                    //lstLeadApproval = await Facility.GetALLFacilityList();
+                    List<ErrorModel> invalidlist = new List<ErrorModel>();
+                    List<ErrorModel> validlist = new List<ErrorModel>();
+                    List<string> EmsgList = new List<string>();
+                    DataTable invalid;
+                    DataTable Valid;
+                    for (int i = 0; i < finalRecords.Rows.Count; i++)
+                    {
+                        string FacilityName1 = Convert.ToString(finalRecords.Rows[i]["FacilityName"]).Trim();
+                        string entityName = Convert.ToString(finalRecords.Rows[i]["Entity"]).Trim();
+                        int projectID = Convert.ToInt32(string.IsNullOrEmpty(finalRecords.Rows[i]["ProjectID"].ToString()) ? "0" : finalRecords.Rows[i]["ProjectID"].ToString());
+                        string projectCd = Convert.ToString(finalRecords.Rows[i]["ProjectCode"]).Trim();
+                        string enterpriseId = Convert.ToString(finalRecords.Rows[i]["EnterpriseId"]).Trim();
+
+                        int row = i + 2;
+                        log.LogInformation("File row number - " + row);
+                        ErrorModel Erow = new ErrorModel();
+                        if ((FacilityName1 == null
+                            || FacilityName1 == "")
+                            && (enterpriseId == null
+                            || enterpriseId == "")
+                            && (entityName == null
+                            || entityName == "")
+                            && (projectCd == null
+                            || projectCd == ""))
+                        {
+                            continue;
+                        }
+                        else if ((FacilityName1 == null
+                            || FacilityName1 == "")
+                            &&
+                            (enterpriseId == null
+                            || enterpriseId == ""))
+                        {
+
+                            err_msg = Constant.FacilityNdEnterpriseIdBlanck + row;
+                            Erow.EnterpriseId = finalRecords.Rows[i]["EnterpriseId"].ToString().Trim();
+                            Erow.FacilityName = FacilityName1;
+                            Erow.ErrorReason = err_msg;
+                            Erow.Entity = entityName;
+                            Erow.ProjectCode = projectCd;
+                            Erow.ProjectId = projectID;
+                            invalidlist.Add(Erow);
+
+
+                        }
+                        else if (FacilityName1 == null
+                            || FacilityName1 == "")
+                        {
+                            err_msg = Constant.UErrorResponse + row;
+                            Erow.EnterpriseId = finalRecords.Rows[i]["EnterpriseId"].ToString().Trim();
+                            Erow.FacilityName = FacilityName1;
+                            Erow.ErrorReason = err_msg;
+                            Erow.Entity = entityName;
+                            Erow.ProjectCode = projectCd;
+                            Erow.ProjectId = projectID;
+                            invalidlist.Add(Erow);
+
+                        }
+                        else if (enterpriseId == null
+                            || enterpriseId == "")
+                        {
+                            err_msg = Constant.EnterpriseIdBlanck + row;
+                            Erow.EnterpriseId = finalRecords.Rows[i]["EnterpriseId"].ToString().Trim();
+                            Erow.FacilityName = FacilityName1;
+                            Erow.ErrorReason = err_msg;
+                            Erow.Entity = entityName;
+                            Erow.ProjectCode = projectCd;
+                            Erow.ProjectId = projectID;
+                            invalidlist.Add(Erow);
+
+                        }
+                        else if ((enterpriseId != null || enterpriseId != ""
+                            || FacilityName1 != null
+                            || FacilityName1 != "")
+                            && (
+                             entityName == null
+                            || entityName == ""))
+                        {
+                            err_msg = Constant.EntityBlank + row;
+                            Erow.EnterpriseId = finalRecords.Rows[i]["EnterpriseId"].ToString().Trim();
+                            Erow.FacilityName = FacilityName1;
+                            Erow.ErrorReason = err_msg;
+                            Erow.Entity = entityName;
+                            Erow.ProjectCode = projectCd;
+                            Erow.ProjectId = projectID;
+                            invalidlist.Add(Erow);
+
+                        }
+                        else if ((entityName == Constant.AiocEntity || entityName == Constant.IcfEntity || entityName == Constant.IcoEntity) && string.IsNullOrEmpty(projectCd)) // now project code is mandatory
+                        {
+                            err_msg = Constant.ProjectIDmandatory + row;
+                            Erow.EnterpriseId = finalRecords.Rows[i]["EnterpriseId"].ToString().Trim();
+                            Erow.FacilityName = FacilityName1;
+                            Erow.ErrorReason = err_msg;
+                            Erow.Entity = entityName;
+                            Erow.ProjectCode = projectCd;
+                            Erow.ProjectId = projectID;
+                            invalidlist.Add(Erow);
+
+                        }
+
+                        else if (FacilityName1 != null)
+                        {
+
+                            string FacilityMatch1 = lstLeadApproval.Where(m => m.facilityName == FacilityName1).Select(m => m.facilityName).FirstOrDefault();
+
+                            if (FacilityMatch1 == null)
+                            {
+                                err_msg = Constant.UFacilityACPError + row;
+                                Erow.EnterpriseId = finalRecords.Rows[i]["EnterpriseId"].ToString().Trim();
+                                Erow.FacilityName = FacilityName1;
+                                Erow.ErrorReason = err_msg;
+                                Erow.Entity = entityName;
+                                Erow.ProjectCode = projectCd;
+                                Erow.ProjectId = projectID;
+                                invalidlist.Add(Erow);
+
+                            }
+                            else
+                            {
+                                if (entityName == Constant.AtciEntity)
+                                    projectID = Convert.ToInt32(string.IsNullOrEmpty(finalRecords.Rows[i]["ProjectID"].ToString()) ? "0" : finalRecords.Rows[i]["ProjectID"].ToString());
+                                else
+                                    projectID = await GetDCSOProjectId(projectCd, entityName);
+
+                                //facilityCd = await GetFacilityCode(FacilityName1);
+                                facilityCd = lstLeadApproval.Where(m => m.facilityName == FacilityName1).Select(m => m.facilityCd).FirstOrDefault();
+
+
+
+                                //locId = await _iemployeeFacilityHelper.GetLocationIdFromInventory(FacilityName1);
+                                locId = lstLeadApproval.Where(m => m.facilityName == FacilityName1).Select(m => m.locationId).FirstOrDefault();
+
+                                if (locId != 0)
+                                    cityName = lstLocation.Where(m => m.LocationId == locId).Select(m => m.LocationNm).FirstOrDefault();
+                                //cityName = await _iemployeeFacilityHelper.GetCitynameFromMaster(locId);
+
+                                bool isValidProjectId = acpProjectList.Exists(x => x.ProjectCode.ToUpper() == projectCd.ToUpper());
+                                if (string.IsNullOrEmpty(projectCd))
+                                {
+                                    if (entityName == Constant.AtciEntity)
+                                    {
+                                        Erow.EnterpriseId = finalRecords.Rows[i]["EnterpriseId"].ToString().Trim();
+                                        Erow.FacilityName = finalRecords.Rows[i]["FacilityName"].ToString().Trim();
+                                        Erow.Entity = finalRecords.Rows[i]["Entity"].ToString().Trim();
+                                        Erow.ProjectCode = projectCd;
+                                        Erow.ProjectId = projectID;
+                                        Erow.CityNm = cityName;
+                                        Erow.FacilityCd = facilityCd;
+
+                                        validlist.Add(Erow);
+                                    }
+                                }
+                                else
+                                {
+                                    if (entityName == Constant.AtciEntity)
+                                    {
+                                        if (!isValidProjectId)
+                                        {
+                                            err_msg = Constant.inValidProjectCd + row;
+                                            Erow.EnterpriseId = finalRecords.Rows[i]["EnterpriseId"].ToString().Trim();
+                                            Erow.FacilityName = FacilityName1;
+                                            Erow.ErrorReason = err_msg;
+                                            Erow.Entity = entityName;
+                                            Erow.ProjectCode = projectCd;
+                                            Erow.ProjectId = projectID;
+                                            invalidlist.Add(Erow);
+
+                                        }
+                                        else
+                                        {
+                                            Erow.EnterpriseId = finalRecords.Rows[i]["EnterpriseId"].ToString().Trim();
+                                            Erow.FacilityName = finalRecords.Rows[i]["FacilityName"].ToString().Trim();
+                                            Erow.Entity = finalRecords.Rows[i]["Entity"].ToString().Trim();
+                                            Erow.ProjectCode = projectCd;
+                                            Erow.ProjectId = projectID;
+                                            Erow.CityNm = cityName;
+                                            Erow.FacilityCd = facilityCd;
+
+                                            validlist.Add(Erow);
+                                        }
+                                    }
+                                    else
+                                    {
+                                        if (projectID == 0)
+                                        {
+                                            err_msg = Constant.inValidProjectCd + row;
+                                            Erow.EnterpriseId = finalRecords.Rows[i]["EnterpriseId"].ToString().Trim();
+                                            Erow.FacilityName = FacilityName1;
+                                            Erow.ErrorReason = err_msg;
+                                            Erow.Entity = entityName;
+                                            Erow.ProjectCode = projectCd;
+                                            Erow.ProjectId = projectID;
+                                            invalidlist.Add(Erow);
+
+                                        }
+                                        else
+                                        {
+                                            Erow.EnterpriseId = finalRecords.Rows[i]["EnterpriseId"].ToString().Trim();
+                                            Erow.FacilityName = finalRecords.Rows[i]["FacilityName"].ToString().Trim();
+                                            Erow.Entity = finalRecords.Rows[i]["Entity"].ToString().Trim();
+                                            Erow.ProjectCode = projectCd;
+                                            Erow.ProjectId = projectID;
+                                            Erow.CityNm = cityName;
+                                            Erow.FacilityCd = facilityCd;
+
+                                            validlist.Add(Erow);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    log.LogInformation("All record added in List:");
+                    invalid = objDAL.ToDataTable(invalidlist);
+                    Valid = objDAL.ToDataTable(validlist);
+                    EmployeeFacilityMapping objEmp = new EmployeeFacilityMapping(_iemployeefacilitymapping, _iazureCommon);
+                    if (invalid.Rows.Count != 0)
+                    {
+                        iresultError = await InsertInvalidList(invalid, Fileid);
+                        //await EmployeeFacilityHelper.GetErrorDetails();
+                        await objEmp.ErrorFileUpload(Fileid, Constant.resourceFacilityError);
+                    }
+                    if (Valid.Rows.Count != 0)
+                    {
+                        iresult = await UploadEmployees(Valid, DataSourceId, uploadby);
+                        //lstEmployeeInputDumpDetails = await objDAL.GetEmployeeDumpData();
+                    }
+                    if (iresultError == 1)
+                    {
+                        int iResult = await _iemployeeFacilityHelper.UpdateUploadFileStatus(Fileid, Constant.Processfailure);
+                        return new Responce
+                        {
+                            Status = "Error",
+                            Message = Constant.invalidlistErrorMsg
+                        };
+                    }
+                    //else if (iresult == 1 && lstEmployeeInputDumpDetails != null)
+                    else if (iresult == 1)
+                    {
+                        int iResult = await _iemployeeFacilityHelper.UpdateUploadFileStatus(Fileid, Constant.SUCCESS);
+                        return new Responce
+                        { Status = "Success", Message = FileuploadSuccessMessage };
+                    }
+
+                    else
+                    {
+                        int iResult = await _iemployeeFacilityHelper.UpdateUploadFileStatus(Fileid, Constant.FAILURE);
+                        if (iresultError == 0)
+                        {
+                            return new Responce
+                            {
+                                Status = "Error",
+                                Message = Constant.invalidlistErrorFMsg
+                            };
+                        }
+                        else
+                        {
+                            return new Responce
+                            { Status = "Error", Message = Constant.UFacilityError };
+                        }
+
+                    }
+                }
+                catch (Exception ex)
+                {
+                    int iResult = await _iemployeeFacilityHelper.UpdateUploadFileStatus(Fileid, Constant.Errorprocess);
+                    log.LogInformation("Error: " + ex.ToString());
+                    return ex.ToString();
+                }
+            }
+            return new Responce
+            { Status = "Success", Message = FileuploadSuccessMessage };
+        }
+
+        public async Task<int> UploadEmployees(DataTable dt, int datasourceid, string uploadby)
+        {
+            int result = 0;
+            try
+            {
+                int EmployeeInputId = 0;
+                DataAccess daservice = new DataAccess();
+                string strConnection = Environment.GetEnvironmentVariable("SqlConnectionString");
+                SqlConnection lCon = new SqlConnection(strConnection);
+                EmployeeInputDump efModel = new EmployeeInputDump();
+                for (int i = 0; i < dt.Rows.Count; i++)
+                {
+                    efModel.EnterpriseId = dt.Rows[i]["EnterpriseId"].ToString().Trim();
+                    efModel.FacilityNm = dt.Rows[i]["FacilityName"].ToString().Trim();
+                    efModel.Entity = dt.Rows[i]["Entity"].ToString().Trim();
+                    efModel.Project = dt.Rows[i]["ProjectCode"].ToString().Trim();
+                    efModel.ProjectId = Convert.ToInt32(dt.Rows[i]["ProjectId"]);
+                    efModel.CityNm = dt.Rows[i]["CityNm"].ToString().Trim();
+                    efModel.FacilityCd = dt.Rows[i]["FacilityCd"].ToString().Trim();
+
+                    var EmpInputid = await _iemployeeFacilityHelper.InsertintoDump(efModel.EnterpriseId, efModel.FacilityNm, efModel.Entity, efModel.Project, uploadby, datasourceid, efModel.ProjectId, efModel.CityNm, efModel.FacilityCd);
+
+                    if (EmpInputid.Rows.Count > 0)
+                    {
+                        foreach (DataRow rows in EmpInputid.Rows)
+                        {
+                            EmployeeInputId = Convert.ToInt32(rows["EmployeeInputId"]);
+
+                            result = await _iemployeeFacilityHelper.InsertintoEmployeeInputHistory(EmployeeInputId);
+
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                return result;
+            }
+
+            return result;
+
+        }
+        public async Task<List<DataSourceConfigModel>> GetDataSourceConfig()
+        {
+            List<DataSourceConfigModel> lstDataSourceConfig = new List<DataSourceConfigModel>();
+            DataAccess daservice = new DataAccess();
+
+            try
+            {
+                var lstDataSOurceConfig = await _iemployeeFacilityHelper.GetDataSourceConfiguration();
+                if (lstDataSOurceConfig.Rows.Count > 0)
+                {
+                    foreach (DataRow rows in lstDataSOurceConfig.Rows)
+                    {
+                        DataSourceConfigModel dcf = new DataSourceConfigModel();
+                        dcf.IsFacilityAutoUpdate = Convert.ToInt32(rows["IsFacilityAutoUpdate"]);
+                        dcf.IsActive = Convert.ToBoolean(rows["IsActive"]);
+                        dcf.SourceName = Convert.ToString(rows["SourceName"]);
+                        dcf.DataSourceId = Convert.ToInt32(rows["DataSourceId"]);
+                        lstDataSourceConfig.Add(dcf);
+
+
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                // await errorLog.ErrorDBLog(ex.ToString(), "Select");
+            }
+            return lstDataSourceConfig;
+        }
+
+
+        public async Task<int> InsertUploaddata(ErrorModel row)
+        {
+            int Fileid = 0;
+            try
+            {
+                var Fileid1 = await _iemployeeFacilityHelper.InsertUploaddata(row);
+
+                string s = Fileid1.Rows[0]["FileId"].ToString();
+
+                Fileid = Convert.ToInt32(s);
+            }
+            catch (Exception ex)
+            {
+                throw ex;
+            }
+            return Fileid;
+        }
+
+        public async Task<int> InsertInvalidList(DataTable dt, int fileid)
+        {
+            int ErrorFileid = 0;
+            try
+            {
+                DataAccess baseService = new DataAccess();
+                ErrorModel Erow = new ErrorModel();
+                for (int i = 0; i < dt.Rows.Count; i++)
+                {
+
+                    Erow.EnterpriseId = dt.Rows[i]["EnterpriseId"].ToString();
+                    Erow.FacilityName = dt.Rows[i]["FacilityName"].ToString();
+                    Erow.ErrorReason = dt.Rows[i]["ErrorReason"].ToString();
+
+                    ErrorFileid = Convert.ToInt32(await _iemployeeFacilityHelper.InsertInvalidListdata(Erow.EnterpriseId, Erow.FacilityName, Erow.ErrorReason, fileid));
+                }
+            }
+            catch (Exception ex)
+            {
+                throw ex;
+            }
+            return ErrorFileid;
+        }
+
+        public async Task<List<ErrorModel>> GetErrorDetails(string UploadedBy)
+        {
+            List<ErrorModel> lsterrordetails = new List<ErrorModel>();
+            DataAccess baservice = new DataAccess();
+            try
+            {
+                var lstFinaleerrordetails = await _iemployeeFacilityHelper.GetErrorDetails(UploadedBy);
+                if (lstFinaleerrordetails.Rows.Count > 0)
+                {
+                    foreach (DataRow rows in lstFinaleerrordetails.Rows)
+                    {
+                        ErrorModel Em = new ErrorModel();
+                        Em.Filenames = Convert.ToString(rows["FileNames"]);
+                        Em.ErrorFileName = Convert.ToString(rows["ErrorFileName"]);
+                        Em.UploadeBy = Convert.ToString(rows["UploadedBy"]);
+                        Em.Uploadedate = Convert.ToDateTime(rows["UploadedDttm"]);
+                        Em.UploadedOn = Em.Uploadedate.ToString("dd-MMM-yyyy hh:mm:ss tt");
+                        Em.Status = Convert.ToString(rows["Status"]);
+                        Em.UploadType = Convert.ToString(rows["UploadType"]);
+                        lsterrordetails.Add(Em);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                // await errorLog.ErrorDBLog(ex.ToString(), "Select");
+            }
+            return lsterrordetails;
+        }
+
+        public async Task<List<FacilityLeadApprovalModel>> getFacilityLeadApproval()
+        {
+            List<FacilityLeadApprovalModel> objList = new List<FacilityLeadApprovalModel>();
+            try
+            {
+
+
+                objList = await _iemployeeFacilityHelper.getFacilityLeadApprovalDetails();
+
+            }
+            catch (WebException ex)
+            {
+                if (ex.Status != WebExceptionStatus.ProtocolError)
+                {
+                    throw ex;
+                }
+            }
+            catch (Exception ex)
+            {
+                throw ex;
+            }
+
+            return objList;
+        }
+
+        public async Task<DataTable> ScriptsExecution(string strScript)
+        {
+            try
+            {
+                ErrorLog errorLog = new ErrorLog();
+                return await baseService.GetDataAsync(System.Data.CommandType.Text, strScript);
+            }
+            catch (Exception ex)
+            {
+                await errorLog.ErrorDBLog(ex.ToString(), "ScriptsExecution");
+                return null;
+            }
+        }
+
+        public async Task<List<QualifiedFacilitiesModel>> GetProjectFacilityMaster()
+        {
+            List<QualifiedFacilitiesModel> lstQulifiedfacilities = new List<QualifiedFacilitiesModel>();
+
+            try
+            {
+                var lstQulifiedFacilities = await _iemployeeFacilityHelper.GetProjectFacilityMaster();
+                if (lstQulifiedFacilities.Rows.Count > 0)
+                {
+                    foreach (DataRow rows in lstQulifiedFacilities.Rows)
+                    {
+                        QualifiedFacilitiesModel QF = new QualifiedFacilitiesModel();
+                        QF.AbacusProjectID = Convert.ToInt32(rows["AbacusProjectId"]);
+                        QF.AbacusProjectName = Convert.ToString(rows["ProjectNm"]);
+                        QF.FacilityName = Convert.ToString(rows["FacilityNm"]);
+                        QF.IsQualified = Convert.ToInt32(rows["IsQualified"]);
+                        QF.FacilityCode = Convert.ToString(rows["FacilityCd"]);
+                        QF.City = Convert.ToString(rows["city"]);
+                        QF.IsSEZ = Convert.ToInt32(rows["IsSEZ"]);
+                        QF.Entity = Convert.ToString(rows["Entity"]);
+                        QF.IsDefault = Convert.ToInt32(rows["IsDefault"]);
+                        lstQulifiedfacilities.Add(QF);
+
+
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                await errorLog.ErrorDBLog(ex.ToString(), "Select");
+            }
+            return lstQulifiedfacilities;
+
+        }
+        public async Task<List<QualifiedFacilitiesModel>> GetProjectFacilityMaster(int abacusProjectId)
+        {
+            List<QualifiedFacilitiesModel> lstQulifiedfacilities = new List<QualifiedFacilitiesModel>();
+
+            try
+            {
+                var lstQulifiedFacilities = await _iemployeeFacilityHelper.GetProjectFacilityMaster(abacusProjectId);
+                if (lstQulifiedFacilities.Rows.Count > 0)
+                {
+                    foreach (DataRow rows in lstQulifiedFacilities.Rows)
+                    {
+                        QualifiedFacilitiesModel QF = new QualifiedFacilitiesModel();
+                        QF.AbacusProjectID = Convert.ToInt32(rows["AbacusProjectId"]);
+                        QF.AbacusProjectName = Convert.ToString(rows["ProjectNm"]);
+                        QF.FacilityName = Convert.ToString(rows["FacilityNm"]);
+                        QF.IsQualified = Convert.ToInt32(rows["IsQualified"]);
+                        QF.FacilityCode = Convert.ToString(rows["FacilityCd"]);
+                        QF.City = Convert.ToString(rows["city"]);
+                        QF.IsSEZ = Convert.ToInt32(rows["IsSEZ"]);
+                        QF.Entity = Convert.ToString(rows["Entity"]);
+                        QF.IsDefault = Convert.ToInt32(rows["IsDefault"]);
+                        lstQulifiedfacilities.Add(QF);
+
+
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                await errorLog.ErrorDBLog(ex.ToString(), "Select");
+            }
+            return lstQulifiedfacilities;
+
+        }
+        public async Task<List<EMPFailityMasterModel>> GetEmployeeFacilityMasterProjectIds()
+        {
+            List<EMPFailityMasterModel> lstEMPfacilities = new List<EMPFailityMasterModel>();
+
+            try
+            {
+                var lstEmployeeFacilities = await _iemployeeFacilityHelper.GetEmployeeFacilityMasterProjectIds();
+                if (lstEmployeeFacilities.Rows.Count > 0)
+                {
+                    foreach (DataRow rows in lstEmployeeFacilities.Rows)
+                    {
+                        EMPFailityMasterModel EF = new EMPFailityMasterModel();
+                        EF.AbacusProjectID = Convert.ToInt32(rows["AbacusProjectId"]);
+
+                        lstEMPfacilities.Add(EF);
+
+
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                await errorLog.ErrorDBLog(ex.ToString(), "Select");
+            }
+            return lstEMPfacilities;
+
+        }
+
+        public async Task<List<EMPFailityMasterModel>> GetEmployeeFacilityMasterProjectIdsAioc()
+        {
+            List<EMPFailityMasterModel> lstEMPfacilities = new List<EMPFailityMasterModel>();
+
+            try
+            {
+                var lstEmployeeFacilities = await _iemployeeFacilityHelper.GetEmployeeFacilityMasterProjectIdsAioc();
+                if (lstEmployeeFacilities.Rows.Count > 0)
+                {
+                    foreach (DataRow rows in lstEmployeeFacilities.Rows)
+                    {
+                        EMPFailityMasterModel EF = new EMPFailityMasterModel();
+                        EF.AbacusProjectID = Convert.ToInt32(rows["AbacusProjectId"]);
+
+                        lstEMPfacilities.Add(EF);
+
+
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                await errorLog.ErrorDBLog(ex.ToString(), "Select");
+            }
+            return lstEMPfacilities;
+
+        }
+        public async Task<List<EMPFailityMasterModel>> GetEmployeeFacilityMaster(int abacusProjectId)
+        {
+            List<EMPFailityMasterModel> lstEMPfacilities = new List<EMPFailityMasterModel>();
+
+            try
+            {
+                var lstEmployeeFacilities = await _iemployeeFacilityHelper.GetEmployeeFacilityMaster(abacusProjectId);
+                if (lstEmployeeFacilities.Rows.Count > 0)
+                {
+                    foreach (DataRow rows in lstEmployeeFacilities.Rows)
+                    {
+                        EMPFailityMasterModel EF = new EMPFailityMasterModel();
+                        EF.AbacusProjectID = Convert.ToInt32(rows["AbacusProjectId"]);
+                        EF.FacilityName = Convert.ToString(rows["FacilityNm"]);
+                        EF.FacilityCode = Convert.ToString(rows["FacilityCd"]);
+                        EF.City = Convert.ToString(rows["city"]);
+                        EF.EnterpriseId = Convert.ToString(rows["EnterpriseId"]);
+                        EF.ServiceNowMasterID = Convert.ToString(rows["ServiceNowMasterID"]);
+                        EF.EmployeeFacilityMasterId = Convert.ToInt32(rows["EmployeeFacilityMasterId"]);
+                        EF.IsIUTSent = Convert.ToString(rows["IsIUTSent"]);
+                        EF.IsSEZSent = Convert.ToString(rows["IsSEZSent"]);
+                        EF.RESOURCESTATUS = Convert.ToString(rows["RESOURCESTATUS"]);
+                        EF.Entities = Convert.ToString(rows["Entity"]);
+                        EF.TentativeDOJ = Convert.ToString(rows["TentativeDOJ"]);
+                        EF.PreviousFacility = Convert.ToString(rows["PreviousFacility"]);
+                        EF.PreviousFacilityCd = Convert.ToString(rows["PreviousFacilityCd"]);
+
+
+                        lstEMPfacilities.Add(EF);
+
+
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                await errorLog.ErrorDBLog(ex.ToString(), "Select");
+            }
+            return lstEMPfacilities;
+
+        }
+        public async Task<int> GetTaggingEmployeeDetails(ILogger log)
+        {
+            int lresult = 0;
+            int projectId = 0;
+            string Entity = string.Empty;
+            string oldFacName = string.Empty;
+            string newFacName = string.Empty;
+            string jsonList = string.Empty;
+            List<QualifiedFacilitiesModel> lstQfacilities = new List<QualifiedFacilitiesModel>();
+            List<EMPFailityMasterModel> lstEmployeefacilities = new List<EMPFailityMasterModel>();
+            List<EMPFailityMasterModel> lstUnresolvedProjects = new List<EMPFailityMasterModel>();
+
+            List<QualifiedFacilitiesModel> filteredProjectData = new List<QualifiedFacilitiesModel>();
+
+            List<SSOTSeatSLModel> lstSLModel = new List<SSOTSeatSLModel>();
+            List<QualifiedFacilitiesModel> lstProcessedProject = new List<QualifiedFacilitiesModel>();
+            List<QualifiedFacilitiesModel> SEZProcessedProject = new List<QualifiedFacilitiesModel>();
+            List<UpdateEmployeeFacilityModel> lstUpdateEF = new List<UpdateEmployeeFacilityModel>();
+            List<UpdateEmployeeFacilityModel> lstUpdateDemandEF = new List<UpdateEmployeeFacilityModel>();
+
+            log.LogInformation($"Tagging method started at: {DateTime.Now}");
+            try
+            {
+                //get facilities data from inventory
+                List<FacilityLeadApprovalModel> lstfacilities = new List<FacilityLeadApprovalModel>();
+                lstfacilities = await getFacilityLeadApproval();
+
+                lstUnresolvedProjects = await GetEmployeeFacilityMasterProjectIds();
+                log.LogInformation($"List of todays unresolved employee projects count: {lstUnresolvedProjects.Count}");
+                if (lstUnresolvedProjects != null)
+                {
+
+                    var lmatchedQulifications = lstQfacilities;
+                    string FacilityName = string.Empty;
+                    string FacilityCode = string.Empty;
+                    string City = string.Empty;
+                    string EnterpriseID = string.Empty;
+                    int EmployeeFacilityMasterId = 0;
+                    string PreviousFacility = string.Empty;
+                    string projectname = string.Empty;
+                    string ServiceNowMasterID = string.Empty;
+                    string RESOURCESTATUS = string.Empty;
+                    string IsIUTSent = string.Empty;
+                    string IsSEZSent = string.Empty;
+                    string Entities = string.Empty;
+                    string TentativeDOJ = string.Empty;
+
+
+                    foreach (var prj in lstUnresolvedProjects)
+                    {
+                        lstEmployeefacilities = await GetEmployeeFacilityMaster(prj.AbacusProjectID);
+                        log.LogInformation($"List of todays unresolved employee count: {lstEmployeefacilities.Count}");
+
+                        lstQfacilities = await GetProjectFacilityMaster(prj.AbacusProjectID);
+                        log.LogInformation($"List of todays unresolved Project count: {lstQfacilities.Count}");
+                        filteredProjectData = lstQfacilities.Where(p => p.IsDefault == 1).ToList();
+                        lstProcessedProject.Clear();
+                        SEZProcessedProject.Clear();
+                        var isqualified = 0;
+
+                        if (lstEmployeefacilities != null)
+                        {
+                            foreach (var item in lstEmployeefacilities)
+                            {
+                                int CityLevelCount = 0;
+                                int SEZLevelCount = 0;
+                                QualifiedFacilitiesModel model = new QualifiedFacilitiesModel();
+                                QualifiedFacilitiesModel SEZdemand = new QualifiedFacilitiesModel();
+                                projectname = lstQfacilities.Select(x => x.AbacusProjectName).FirstOrDefault();
+                                if (filteredProjectData.Count > 0)
+                                {
+                                    CityLevelCount = 1;
+                                    lmatchedQulifications = filteredProjectData.Where(p => p.City == item.City).ToList();
+                                }
+                                else
+                                {
+                                    CityLevelCount = lstQfacilities.Where(p => p.City == item.City && p.IsQualified == Constant.isQualifiedOne).Count();
+                                    lmatchedQulifications = lstQfacilities.Where(p => p.City == item.City && p.IsQualified == Constant.isQualifiedOne).ToList();
+                                    SEZLevelCount = lstQfacilities.Where(p => p.City == item.City && (p.IsQualified == Constant.IsQualified || p.IsQualified == Constant.IsQualifiedFinance)).Count();
+                                    int ProcessProjectCount = lstProcessedProject.Where(p => p.City == item.City && p.IsQualified == Constant.isQualifiedOne).Count();
+                                    if (ProcessProjectCount > 0)
+                                    {
+                                        CityLevelCount = lstProcessedProject.Where(p => p.City == item.City && p.IsQualified == Constant.isQualifiedOne).Count();
+                                        lmatchedQulifications = lstProcessedProject.Where(p => p.City == item.City && p.IsQualified == Constant.isQualifiedOne).ToList();
+                                    }
+                                    var empSite = lstfacilities.Where(m => m.facilityName == item.FacilityName).Select(m => m.facilityName).FirstOrDefault();
+                                    int SezProjectCount = SEZProcessedProject.Where(p => p.City == item.City && (p.IsQualified == Constant.IsQualified || p.IsQualified == Constant.IsQualifiedFinance)).Count();
+                                    isqualified = SEZProcessedProject.Where(p => p.City == item.City && (p.IsQualified == Constant.IsQualified || p.IsQualified == Constant.IsQualifiedFinance)).Select(p => p.IsQualified).FirstOrDefault();
+
+                                    log.LogInformation($"lstProcessedProject count : {lstProcessedProject.Count}");
+                                    log.LogInformation($"SEZProcessedProject count : {SEZProcessedProject.Count}");
+
+                                    string SEZList = JsonConvert.SerializeObject(SEZProcessedProject, Formatting.Indented);
+                                    string STPIList = JsonConvert.SerializeObject(lstProcessedProject, Formatting.Indented);
+                                    log.LogInformation($"City value : {item.City}");
+                                    log.LogInformation($"SEZProcessedProject List : {SEZList}");
+                                    log.LogInformation($"lstProcessedProject List : {STPIList}");
+                                    log.LogInformation($"SezProjectCount value : {SezProjectCount}");
+                                    log.LogInformation($"CityLevelCount : {CityLevelCount}");
+                                    if (SezProjectCount > 0)
+                                    {
+                                        SEZLevelCount = SEZProcessedProject.Where(p => p.City == item.City && (p.IsQualified == Constant.IsQualified || p.IsQualified == Constant.IsQualifiedFinance)).Count();
+                                    }
+                                }
+                                if (CityLevelCount == 1)
+                                {
+                                    if (lmatchedQulifications.Count > 0)
+                                    {
+
+                                        FacilityName = Convert.ToString(lmatchedQulifications[0].FacilityName);
+                                        FacilityCode = Convert.ToString(lmatchedQulifications[0].FacilityCode);
+                                        EmployeeFacilityMasterId = Convert.ToInt32(item.EmployeeFacilityMasterId);
+                                        PreviousFacility = Convert.ToString(item.PreviousFacility);
+                                        EnterpriseID = Convert.ToString(item.EnterpriseId);
+                                        ServiceNowMasterID = Convert.ToString(item.ServiceNowMasterID);
+                                        RESOURCESTATUS = Convert.ToString(item.RESOURCESTATUS);
+                                        IsIUTSent = Convert.ToString(item.IsIUTSent);
+                                        IsSEZSent = Convert.ToString(item.IsSEZSent);
+                                        Entities = Convert.ToString(item.Entities);
+                                        TentativeDOJ = Convert.ToString(item.TentativeDOJ);
+
+                                        //var siteRes = await siteChangedCheck(lstfacilities, PreviousFacility, FacilityName, log);
+
+                                        int siteRes = 0;
+                                        string isNewJoiner = await GetIsNewJoinerStatus(int.Parse(ServiceNowMasterID));
+                                        if (isNewJoiner == "Y")
+                                        {
+                                            siteRes = Constant.SiteChanged;
+                                        }
+                                        else
+                                        {
+                                            siteRes = await siteChangedCheck(lstfacilities, PreviousFacility, FacilityName, log);
+                                        }
+
+                                        UpdateEmployeeFacilityModel objEF = new UpdateEmployeeFacilityModel();
+                                        objEF.AbacusProjectID = Convert.ToInt32(item.AbacusProjectID);
+                                        objEF.AbacusProjectName = projectname;
+                                        objEF.City = item.City;
+                                        objEF.FacilityCode = FacilityCode;
+                                        objEF.FacilityName = FacilityName;
+                                        objEF.EmployeeFacilityMasterId = EmployeeFacilityMasterId;
+                                        objEF.PreviousFacility = PreviousFacility;
+                                        objEF.EnterpriseId = EnterpriseID;
+                                        objEF.IsSEZ = lmatchedQulifications[0].IsSEZ;
+                                        objEF.IsSiteChanged = siteRes;
+                                        objEF.Status = Constant.Resolved;
+                                        objEF.IsQualified = lmatchedQulifications[0].IsQualified;
+                                        objEF.ServiceNowMasterID = ServiceNowMasterID;
+                                        objEF.RESOURCESTATUS = RESOURCESTATUS;
+                                        objEF.IsIUTSent = IsIUTSent;
+                                        objEF.IsSEZSent = IsSEZSent;
+                                        objEF.Entities = Entities;
+                                        objEF.TentativeDOJ = TentativeDOJ;
+
+                                        lstUpdateEF.Add(objEF);
+                                    }
+                                }
+                                else //0 or more than 1
+                                {
+                                    //citylevelcount > 1
+                                    var listFac = lstQfacilities.Where(p => p.City == item.City && p.IsQualified == Constant.isQualifiedOne && p.FacilityName == item.FacilityName).ToList();
+                                    if (listFac.Count > 0 && IsMultipleQualifiedFacilitiesApplicable == true)
+                                    {
+
+                                        FacilityName = Convert.ToString(lmatchedQulifications[0].FacilityName);
+                                        FacilityCode = Convert.ToString(lmatchedQulifications[0].FacilityCode);
+                                        EmployeeFacilityMasterId = Convert.ToInt32(item.EmployeeFacilityMasterId);
+                                        PreviousFacility = Convert.ToString(item.PreviousFacility);
+                                        EnterpriseID = Convert.ToString(item.EnterpriseId);
+                                        ServiceNowMasterID = Convert.ToString(item.ServiceNowMasterID);
+                                        RESOURCESTATUS = Convert.ToString(item.RESOURCESTATUS);
+                                        IsIUTSent = Convert.ToString(item.IsIUTSent);
+                                        IsSEZSent = Convert.ToString(item.IsSEZSent);
+                                        Entities = Convert.ToString(item.Entities);
+                                        TentativeDOJ = Convert.ToString(item.TentativeDOJ);
+                                        //var siteRes = await siteChangedCheck(lstfacilities, PreviousFacility, FacilityName, log);
+                                        int siteRes = 0;
+                                        string isNewJoiner = await GetIsNewJoinerStatus(int.Parse(ServiceNowMasterID));
+                                        if (isNewJoiner == "Y")
+                                        {
+                                            siteRes = Constant.SiteChanged;
+                                        }
+                                        else
+                                        {
+                                            siteRes = await siteChangedCheck(lstfacilities, PreviousFacility, FacilityName, log);
+                                        }
+                                        UpdateEmployeeFacilityModel objEF = new UpdateEmployeeFacilityModel();
+                                        objEF.AbacusProjectID = Convert.ToInt32(item.AbacusProjectID);
+                                        objEF.AbacusProjectName = projectname;
+                                        objEF.City = item.City;
+                                        objEF.FacilityCode = FacilityCode;
+                                        objEF.FacilityName = FacilityName;
+                                        objEF.EmployeeFacilityMasterId = EmployeeFacilityMasterId;
+                                        objEF.PreviousFacility = PreviousFacility;
+                                        objEF.EnterpriseId = EnterpriseID;
+                                        objEF.IsSEZ = lmatchedQulifications[0].IsSEZ;
+                                        objEF.IsSiteChanged = siteRes;
+                                        objEF.Status = Constant.Resolved;
+                                        objEF.ServiceNowMasterID = ServiceNowMasterID;
+                                        objEF.RESOURCESTATUS = RESOURCESTATUS;
+                                        objEF.IsIUTSent = IsIUTSent;
+                                        objEF.IsSEZSent = IsSEZSent;
+
+                                        objEF.Entities = Entities;
+                                        objEF.TentativeDOJ = TentativeDOJ;
+
+                                        objEF.IsQualified = lmatchedQulifications[0].IsQualified;
+
+                                        lstUpdateEF.Add(objEF);
+                                    }
+                                    else
+                                    {
+                                        EmployeeFacilityMasterId = Convert.ToInt32(item.EmployeeFacilityMasterId);
+                                        FacilityName = Convert.ToString(item.FacilityName);
+                                        FacilityCode = Convert.ToString(item.FacilityCode);
+
+                                        UpdateEmployeeFacilityModel objEF = new UpdateEmployeeFacilityModel();
+                                        objEF.EmployeeFacilityMasterId = EmployeeFacilityMasterId;
+                                        objEF.AbacusProjectID = Convert.ToInt32(item.AbacusProjectID);
+                                        objEF.AbacusProjectName = projectname;
+                                        objEF.City = item.City;
+                                        objEF.FacilityCode = FacilityCode;
+                                        objEF.FacilityName = FacilityName;
+                                        objEF.EnterpriseId = Convert.ToString(item.EnterpriseId);
+                                        objEF.ServiceNowMasterID = Convert.ToString(item.ServiceNowMasterID);
+                                        objEF.RESOURCESTATUS = Convert.ToString(item.RESOURCESTATUS);
+                                        objEF.IsIUTSent = Convert.ToString(item.IsIUTSent);
+                                        objEF.IsSEZSent = Convert.ToString(item.IsSEZSent);
+                                        objEF.Status = Constant.Unresolved;
+                                        objEF.Entities = Convert.ToString(item.Entities);
+                                        objEF.TentativeDOJ = Convert.ToString(item.TentativeDOJ);
+                                        lstUpdateEF.Add(objEF);
+                                    }
+                                    if (CityLevelCount == 0)
+                                    {
+                                        var Projlst = lstQfacilities.Where(p => p.City == item.City && p.IsQualified == Constant.isQualifiedZero && p.FacilityName == item.FacilityName).ToList();
+                                        if (Projlst.Count > 0)
+                                        {
+                                            //Stpi block
+                                            if (Projlst[0].IsSEZ == 0)
+                                            {
+                                                //check in lstUpdateDemandEF if projectId and city combination is there with isqualified = 2 or 3,then set to isqualified as 1 and city and facility = item.City  , item.facility
+                                                lstUpdateDemandEF.Where(x => x.AbacusProjectID == item.AbacusProjectID && x.City == item.City && (x.IsQualified == Constant.IsQualified || x.IsQualified == Constant.IsQualifiedFinance)).ToList().ForEach(c => c.FacilityName = item.FacilityName);
+                                                lstUpdateDemandEF.Where(x => x.AbacusProjectID == item.AbacusProjectID && x.City == item.City && (x.IsQualified == Constant.IsQualified || x.IsQualified == Constant.IsQualifiedFinance)).ToList().ForEach(c => c.IsQualified = Constant.isQualifiedOne);
+
+                                                UpdateEmployeeFacilityModel objEF = new UpdateEmployeeFacilityModel();
+                                                objEF.FacilityName = item.FacilityName;
+                                                objEF.AbacusProjectID = item.AbacusProjectID;
+                                                objEF.City = item.City;
+                                                objEF.EnterpriseId = item.EnterpriseId;
+                                                objEF.ServiceNowMasterID = item.ServiceNowMasterID;
+                                                objEF.RESOURCESTATUS = Convert.ToString(item.RESOURCESTATUS);
+                                                objEF.IsIUTSent = Convert.ToString(item.IsIUTSent);
+                                                objEF.IsSEZSent = Convert.ToString(item.IsSEZSent);
+
+                                                objEF.Entities = Convert.ToString(item.Entities);
+                                                objEF.TentativeDOJ = Convert.ToString(item.TentativeDOJ);
+                                                objEF.EmployeeFacilityMasterId = EmployeeFacilityMasterId;
+                                                objEF.IsSEZ = Projlst[0].IsSEZ;
+                                                objEF.IsQualified = Constant.isQualifiedOne;
+                                                objEF.Status = Constant.CreateDemand;
+
+                                                lstUpdateDemandEF.Add(objEF);
+                                                log.LogInformation($"STPI block Facility : {item.FacilityName}");
+                                                //check in lstUpdateEF if projectId and city combination is there with isqualified= 2 or 3, set to isqualified as 1 and status = resolved and facility= item.FacilityName
+                                                lstUpdateEF.Where(x => x.AbacusProjectID == item.AbacusProjectID && x.City == item.City && (x.IsQualified == Constant.IsQualified || x.IsQualified == Constant.IsQualifiedFinance)).ToList().ForEach(c => c.FacilityName = item.FacilityName);
+                                                lstUpdateEF.Where(x => x.AbacusProjectID == item.AbacusProjectID && x.City == item.City && (x.IsQualified == Constant.IsQualified || x.IsQualified == Constant.IsQualifiedFinance)).ToList().ForEach(c => c.Status = Constant.Resolved);
+                                                lstUpdateEF.Where(x => x.AbacusProjectID == item.AbacusProjectID && x.City == item.City && (x.IsQualified == Constant.IsQualified || x.IsQualified == Constant.IsQualifiedFinance)).ToList().ForEach(c => c.IsQualified = Constant.isQualifiedOne);
+
+                                                lstUpdateEF.Single(x => x.EmployeeFacilityMasterId == EmployeeFacilityMasterId).IsQualified = Constant.isQualifiedOne;
+                                                lstUpdateEF.Single(x => x.EmployeeFacilityMasterId == EmployeeFacilityMasterId).Status = Constant.Resolved;
+
+                                                model.AbacusProjectID = item.AbacusProjectID;
+                                                model.City = item.City;
+                                                model.FacilityName = item.FacilityName;
+                                                model.IsQualified = Constant.isQualifiedOne;
+                                                lstProcessedProject.Add(model);
+                                            }
+                                            else // sez block
+                                            {
+                                                log.LogInformation($"SEZLevelCount : {SEZLevelCount}");
+                                                if (SEZLevelCount == 0)
+                                                {
+                                                    var resIdb = await ProjectClassificationUpdate(Projlst[0].AbacusProjectID, Projlst[0].City, log);
+                                                    if (resIdb != string.Empty)
+                                                    {
+                                                        if (resIdb == Constant.IDB)
+                                                        {
+                                                            UpdateEmployeeFacilityModel objEF = new UpdateEmployeeFacilityModel();
+                                                            objEF.FacilityName = item.FacilityName;
+                                                            objEF.AbacusProjectID = item.AbacusProjectID;
+                                                            objEF.City = item.City;
+                                                            objEF.EnterpriseId = item.EnterpriseId;
+                                                            objEF.ServiceNowMasterID = item.ServiceNowMasterID;
+                                                            objEF.RESOURCESTATUS = Convert.ToString(item.RESOURCESTATUS);
+                                                            objEF.IsIUTSent = Convert.ToString(item.IsIUTSent);
+                                                            objEF.IsSEZSent = Convert.ToString(item.IsSEZSent);
+
+                                                            objEF.Entities = Convert.ToString(item.Entities);
+                                                            objEF.TentativeDOJ = Convert.ToString(item.TentativeDOJ);
+                                                            objEF.EmployeeFacilityMasterId = EmployeeFacilityMasterId;
+                                                            objEF.Status = Constant.PendingApproval;
+                                                            objEF.IsSEZ = Projlst[0].IsSEZ;
+                                                            objEF.IsQualified = Constant.IsQualifiedFinance;
+                                                            objEF.AbacusProjectName = Projlst[0].AbacusProjectName;
+                                                            objEF.IsIDB = Constant.IDB;
+
+                                                            lstUpdateDemandEF.Add(objEF);
+
+                                                            lstUpdateEF.Single(x => x.EmployeeFacilityMasterId == EmployeeFacilityMasterId).IsQualified = Constant.IsQualifiedFinance;
+                                                            lstUpdateEF.Single(x => x.EmployeeFacilityMasterId == EmployeeFacilityMasterId).Status = Constant.PendingApproval;
+
+                                                            SEZdemand.AbacusProjectID = item.AbacusProjectID;
+                                                            SEZdemand.City = item.City;
+                                                            SEZdemand.FacilityName = item.FacilityName;
+                                                            SEZdemand.IsQualified = Constant.IsQualifiedFinance;
+                                                            //add site here
+                                                            SEZdemand.Site = lstfacilities.Where(m => m.facilityName == item.FacilityName).Select(m => m.facilityName).FirstOrDefault();
+                                                            SEZProcessedProject.Add(SEZdemand);
+                                                        }
+                                                        else
+                                                        {
+                                                            UpdateEmployeeFacilityModel objEF = new UpdateEmployeeFacilityModel();
+                                                            objEF.FacilityName = item.FacilityName;
+                                                            objEF.AbacusProjectID = item.AbacusProjectID;
+                                                            objEF.City = item.City;
+                                                            objEF.EnterpriseId = item.EnterpriseId;
+                                                            objEF.ServiceNowMasterID = item.ServiceNowMasterID;
+                                                            objEF.RESOURCESTATUS = Convert.ToString(item.RESOURCESTATUS);
+                                                            objEF.IsIUTSent = Convert.ToString(item.IsIUTSent);
+                                                            objEF.IsSEZSent = Convert.ToString(item.IsSEZSent);
+
+                                                            objEF.Entities = Convert.ToString(item.Entities);
+                                                            objEF.TentativeDOJ = Convert.ToString(item.TentativeDOJ);
+                                                            objEF.EmployeeFacilityMasterId = EmployeeFacilityMasterId;
+                                                            objEF.IsSEZ = Projlst[0].IsSEZ;
+                                                            objEF.IsQualified = Constant.isQualifiedOne;
+                                                            objEF.Status = Constant.CreateDemand;
+                                                            objEF.IsIDB = Constant.NONIDB;
+
+                                                            lstUpdateDemandEF.Add(objEF);
+
+                                                            lstUpdateEF.Single(x => x.EmployeeFacilityMasterId == EmployeeFacilityMasterId).IsQualified = Constant.isQualifiedOne;
+                                                            lstUpdateEF.Single(x => x.EmployeeFacilityMasterId == EmployeeFacilityMasterId).Status = Constant.Resolved;
+
+                                                            SEZdemand.AbacusProjectID = item.AbacusProjectID;
+                                                            SEZdemand.City = item.City;
+                                                            SEZdemand.FacilityName = item.FacilityName;
+                                                            SEZdemand.IsQualified = Constant.isQualifiedOne;
+                                                            //add site here
+                                                            SEZdemand.Site = lstfacilities.Where(m => m.facilityName == item.FacilityName).Select(m => m.facilityName).FirstOrDefault();
+                                                            SEZProcessedProject.Add(SEZdemand);
+                                                        }
+                                                    }
+                                                    else
+                                                    {
+                                                        UpdateEmployeeFacilityModel objEF = new UpdateEmployeeFacilityModel();
+                                                        objEF.FacilityName = item.FacilityName;
+                                                        objEF.AbacusProjectID = item.AbacusProjectID;
+                                                        objEF.City = item.City;
+                                                        objEF.EnterpriseId = item.EnterpriseId;
+                                                        objEF.ServiceNowMasterID = item.ServiceNowMasterID;
+                                                        objEF.RESOURCESTATUS = Convert.ToString(item.RESOURCESTATUS);
+                                                        objEF.IsIUTSent = Convert.ToString(item.IsIUTSent);
+                                                        objEF.IsSEZSent = Convert.ToString(item.IsSEZSent);
+                                                        objEF.Entities = Convert.ToString(item.Entities);
+                                                        objEF.TentativeDOJ = Convert.ToString(item.TentativeDOJ);
+                                                        objEF.EmployeeFacilityMasterId = EmployeeFacilityMasterId;
+                                                        objEF.Status = Constant.PendingApproval;
+                                                        objEF.IsSEZ = Projlst[0].IsSEZ;
+                                                        objEF.IsQualified = Constant.IsQualified;
+                                                        objEF.AbacusProjectName = Projlst[0].AbacusProjectName;
+
+                                                        log.LogInformation($"SEZLevel facility : {item.FacilityName}");
+                                                        log.LogInformation($"SEZLevel City : {item.City}");
+                                                        lstUpdateDemandEF.Add(objEF);
+
+                                                        lstUpdateEF.Single(x => x.EmployeeFacilityMasterId == EmployeeFacilityMasterId).IsQualified = Constant.IsQualified;
+                                                        lstUpdateEF.Single(x => x.EmployeeFacilityMasterId == EmployeeFacilityMasterId).Status = Constant.PendingApproval;
+
+                                                        SEZdemand.AbacusProjectID = item.AbacusProjectID;
+                                                        SEZdemand.City = item.City;
+                                                        SEZdemand.FacilityName = item.FacilityName;
+                                                        SEZdemand.IsQualified = Constant.IsQualified;
+                                                        //add site here
+                                                        SEZdemand.Site = lstfacilities.Where(m => m.facilityName == item.FacilityName).Select(m => m.facilityName).FirstOrDefault();
+                                                        SEZProcessedProject.Add(SEZdemand);
+                                                    }
+                                                }
+                                                else
+                                                {
+                                                    lstUpdateEF.Single(x => x.EmployeeFacilityMasterId == EmployeeFacilityMasterId).IsQualified = isqualified;
+                                                    lstUpdateEF.Single(x => x.EmployeeFacilityMasterId == EmployeeFacilityMasterId).Status = Constant.PendingApproval;
+                                                }
+                                            }
+                                        }
+                                        // other details are not available to insert when ProjList =0 .. so on hold
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    var serviceUrlEF = Convert.ToString(Environment.GetEnvironmentVariable("ServiceApiBaseUrl") + FnSendMessageEF);
+                    var serviceUrlDemand = Convert.ToString(Environment.GetEnvironmentVariable("ServiceApiBaseUrl") + FnSendMessageDemand);
+
+                    using (var client = new HttpClient())
+                    {
+                        log.LogInformation($"Tagging List count at: {DateTime.Now}");
+                        log.LogInformation($"Tagging List count : {lstUpdateEF.Count}");
+                        var tagcounter = 0;
+
+                        var res = ChunkBy(lstUpdateEF, chunkLimit);
+
+                        foreach (var obj in res)
+                        {
+                            string jsonList1 = JsonConvert.SerializeObject(obj, Formatting.Indented);
+
+                            var httpContent = new StringContent(jsonList1.ToString(), Encoding.UTF8, "application/json");
+
+                            HttpResponseMessage responseFromAnotherFunction = await client.PostAsync(serviceUrlEF, httpContent);
+                            if (responseFromAnotherFunction.IsSuccessStatusCode)
+                            {
+                                tagcounter = tagcounter + 1;
+                            }
+                        }
+
+                        log.LogInformation($"Tagging List count sent to queue : {tagcounter}");
+                        log.LogInformation($"Demand List count at: {DateTime.Now}");
+                        log.LogInformation($"Demand List count : {lstUpdateDemandEF.Count}");
+                        tagcounter = 0;
+
+                        res = ChunkBy(lstUpdateDemandEF, chunkLimit);
+                        foreach (var obj in res)
+                        {
+                            string jsonList1 = JsonConvert.SerializeObject(obj, Formatting.Indented);
+
+                            var httpContent = new StringContent(jsonList1.ToString(), Encoding.UTF8, "application/json");
+
+                            HttpResponseMessage responseFromAnotherFunction = await client.PostAsync(serviceUrlDemand, httpContent);
+                            if (responseFromAnotherFunction.IsSuccessStatusCode)
+                            {
+                                tagcounter = tagcounter + 1;
+                            }
+                        }
+                        log.LogInformation($"Demand List count sent to queue : {tagcounter}");
+                    }
+                    var lstEmployeeFacilities = lstUpdateDemandEF.Where(p => p.IsQualified == Constant.IsQualifiedBizOPs && p.Status == Constant.PendingApproval).ToList();
+                    if (lstEmployeeFacilities.Count > 0)
+                    {
+                        string resMail = await SendBizOPsMail(lstEmployeeFacilities, log);
+                    }
+                    var lstEmployeefinance = lstUpdateDemandEF.Where(p => p.IsQualified == Constant.IsQualifiedFinance && p.Status == Constant.PendingApproval).ToList();
+                    if (lstEmployeefinance.Count > 0)
+                    {
+                        string resMail = await SendFinanceMail(lstEmployeefinance, log);
+                    }
+                }
+                log.LogInformation($"Tagging method Ended at: {DateTime.Now}");
+            }
+            catch (Exception ex)
+            {
+                log.LogInformation("Error in Tagging method " + ex.ToString());
+                throw ex;
+            }
+            return lresult;
+        }
+        public async Task<string> GetIsNewJoinerStatus(int ServiceNowMasterID)
+        {
+
+            var isNewJoiner = await _iemployeeFacilityHelper.GetServiceNowDetailsIsNew(ServiceNowMasterID);
+            string result = string.Empty;
+            if (isNewJoiner.Rows.Count > 0)
+            {
+                foreach (DataRow rows in isNewJoiner.Rows)
+                {
+                    result = rows["IsNewJoiner"] != DBNull.Value ? Convert.ToString(rows["IsNewJoiner"]) : string.Empty;                    
+                }
+            }
+            return result;
+        }
+        public async Task<string> ProjectClassificationUpdate(int AbacusProjectID, string city, ILogger log)
+        {
+            try
+            {
+                string projClassification = string.Empty;
+                DataTable projClass = new DataTable();
+                projClass = await _iazureCommon.CheckProjectClassification(AbacusProjectID, city, log);
+                var res = 0;
+                if (projClass.Rows.Count > 0)
+                {
+                    if (projClass.Rows[0]["IsIDB"] != DBNull.Value && Convert.ToString(projClass.Rows[0]["IsIDB"]) == Constant.IDB)
+                    {
+                        projClassification = Convert.ToString(projClass.Rows[0]["IsIDB"]);
+                        res = await _iazureCommon.UpdateProjectClass(AbacusProjectID, city, projClassification, log);
+                    }
+                    else if (projClass.Rows[0]["IsIDB"] != DBNull.Value && Convert.ToString(projClass.Rows[0]["IsIDB"]) == Constant.NONIDB)
+                    {
+                        projClassification = Constant.NONIDB;
+                        res = await _iazureCommon.UpdateProjectClass(AbacusProjectID, city, projClassification, log);
+                    }
+                }
+                return projClassification;
+            }
+            catch (Exception ex)
+            {
+                log.LogInformation("Error in ProjectClassificationUpdate method " + ex.ToString());
+                throw ex;
+            }
+
+        }
+        public static List<List<UpdateEmployeeFacilityModel>> ChunkBy<UpdateEmployeeFacilityModel>(List<UpdateEmployeeFacilityModel> source, int chunkSize)
+        {
+            return source
+                .Select((x, i) => new { Index = i, Value = x })
+                .GroupBy(x => x.Index / chunkSize)
+                .Select(x => x.Select(v => v.Value).ToList())
+                .ToList();
+        }
+        public async Task<int> GetTaggingEmployeeDetailsForAioc(ILogger log)
+        {
+            int lresult = 0;
+            List<QualifiedFacilitiesModel> lstQfacilities = new List<QualifiedFacilitiesModel>();
+            List<EMPFailityMasterModel> lstEmployeefacilities = new List<EMPFailityMasterModel>();
+            List<QualifiedFacilitiesModel> filteredProjectData = new List<QualifiedFacilitiesModel>();
+            List<EMPFailityMasterModel> lstUnresolvedProjects = new List<EMPFailityMasterModel>();
+            List<UpdateEmployeeFacilityModel> lstUpdateEF = new List<UpdateEmployeeFacilityModel>();
+
+            log.LogInformation($"Aioc Tagging method started at: {DateTime.Now}");
+            try
+            {
+                //get facilities data from inventory
+                List<FacilityLeadApprovalModel> lstfacilities = new List<FacilityLeadApprovalModel>();
+                lstfacilities = await getFacilityLeadApproval();
+
+                lstUnresolvedProjects = await GetEmployeeFacilityMasterProjectIdsAioc();
+                log.LogInformation($"Aioc List of todays unresolved employee projects count: {lstUnresolvedProjects.Count}");
+
+                if (lstUnresolvedProjects != null)
+                {
+                    var lmatchedQulifications = lstQfacilities;
+                    string FacilityName = string.Empty;
+                    string FacilityCode = string.Empty;
+                    string City = string.Empty;
+                    string EnterpriseID = string.Empty;
+                    string ServiceNowMasterID = string.Empty;
+                    int EmployeeFacilityMasterId = 0;
+                    string PreviousFacility = string.Empty;
+                    string projectname = string.Empty;
+
+                    foreach (var prj in lstUnresolvedProjects)
+                    {
+                        lstQfacilities = await GetProjectFacMasterForAioc(prj.AbacusProjectID);
+                        if (Logs == "true")
+                        {
+                            log.LogInformation("Information:Get records from Method GetProjectFacMasterForAioc(): " + lstQfacilities.Count);
+                        }
+
+                        lstEmployeefacilities = await GetEmpFacMasterForAioc(prj.AbacusProjectID);
+                        if (Logs == "true")
+                        {
+                            log.LogInformation("Information:Get records from Method GetEmpFacMasterForAioc(): " + lstEmployeefacilities.Count);
+                        }
+
+                        filteredProjectData = lstQfacilities.Where(p => p.IsDefault == 1).ToList();
+
+                        if (lstQfacilities != null && lstEmployeefacilities != null)
+                        {
+                            foreach (var item in lstEmployeefacilities)
+                            {
+                                int CityLevelCount = 0;
+                                projectname = lstQfacilities.Select(x => x.AbacusProjectName).FirstOrDefault();
+                                if (filteredProjectData.Count > 0)
+                                {
+                                    CityLevelCount = 1;
+                                    lmatchedQulifications = filteredProjectData.Where(p => p.City == item.City).ToList();
+                                }
+                                else
+                                {
+                                    lmatchedQulifications = lstQfacilities.Where(p => p.City == item.City && p.AbacusProjectID == item.AbacusProjectID && p.IsQualified == Constant.isQualifiedOne).ToList();
+                                    CityLevelCount = lmatchedQulifications.Count();
+                                }
+                                if (CityLevelCount == 1)
+                                {
+                                    if (lmatchedQulifications.Count > 0)
+                                    {
+                                        FacilityName = Convert.ToString(lmatchedQulifications[0].FacilityName);
+                                        FacilityCode = Convert.ToString(lmatchedQulifications[0].FacilityCode);
+                                        EmployeeFacilityMasterId = Convert.ToInt32(item.EmployeeFacilityMasterId);
+                                        PreviousFacility = Convert.ToString(item.PreviousFacility);
+                                        EnterpriseID = Convert.ToString(item.EnterpriseId);
+                                        ServiceNowMasterID= Convert.ToString(item.ServiceNowMasterID);
+                                        //var siteRes = await siteChangedCheck(lstfacilities, PreviousFacility, FacilityName, log);
+                                        int siteRes = 0;
+                                        string isNewJoiner = await GetIsNewJoinerStatus(int.Parse(ServiceNowMasterID));
+                                        if (isNewJoiner == "Y")
+                                        {
+                                            siteRes = Constant.SiteChanged;
+                                        }
+                                        else
+                                        {
+                                            siteRes = await siteChangedCheck(lstfacilities, PreviousFacility, FacilityName, log);
+                                        }
+
+                                        UpdateEmployeeFacilityModel objEF = new UpdateEmployeeFacilityModel();
+                                        objEF.AbacusProjectID = Convert.ToInt32(item.AbacusProjectID);
+                                        objEF.AbacusProjectName = projectname;
+                                        objEF.City = item.City;
+                                        objEF.FacilityCode = FacilityCode;
+                                        objEF.FacilityName = FacilityName;
+                                        objEF.EmployeeFacilityMasterId = EmployeeFacilityMasterId;
+                                        objEF.PreviousFacility = PreviousFacility;
+                                        objEF.EnterpriseId = EnterpriseID;
+                                        objEF.IsSEZ = lmatchedQulifications[0].IsSEZ;
+                                        objEF.IsSiteChanged = siteRes;
+                                        objEF.Status = Constant.Resolved;
+                                        objEF.IsQualified = lmatchedQulifications[0].IsQualified;
+
+                                        lstUpdateEF.Add(objEF);
+                                    }
+                                }
+                                else
+                                {
+                                    var listFac = lstQfacilities.Where(p => p.City == item.City && p.AbacusProjectID == item.AbacusProjectID && p.IsQualified == Constant.isQualifiedOne && p.FacilityName == item.FacilityName).ToList();
+                                    if (listFac.Count > 0 && IsMultipleQualifiedFacilitiesApplicable == true)
+                                    {
+
+                                        FacilityName = Convert.ToString(lmatchedQulifications[0].FacilityName);
+                                        FacilityCode = Convert.ToString(lmatchedQulifications[0].FacilityCode);
+                                        EmployeeFacilityMasterId = Convert.ToInt32(item.EmployeeFacilityMasterId);
+                                        PreviousFacility = Convert.ToString(item.PreviousFacility);
+                                        EnterpriseID = Convert.ToString(item.EnterpriseId);
+                                        ServiceNowMasterID = Convert.ToString(item.ServiceNowMasterID);
+                                        // var siteRes = await siteChangedCheck(lstfacilities, PreviousFacility, FacilityName, log);
+                                        int siteRes = 0;
+                                        string isNewJoiner = await GetIsNewJoinerStatus(int.Parse(ServiceNowMasterID));
+                                        if (isNewJoiner == "Y")
+                                        {
+                                            siteRes = Constant.SiteChanged;
+                                        }
+                                        else
+                                        {
+                                            siteRes = await siteChangedCheck(lstfacilities, PreviousFacility, FacilityName, log);
+                                        }
+
+                                        UpdateEmployeeFacilityModel objEF = new UpdateEmployeeFacilityModel();
+                                        objEF.AbacusProjectID = Convert.ToInt32(item.AbacusProjectID);
+                                        objEF.AbacusProjectName = projectname;
+                                        objEF.City = item.City;
+                                        objEF.FacilityCode = FacilityCode;
+                                        objEF.FacilityName = FacilityName;
+                                        objEF.EmployeeFacilityMasterId = EmployeeFacilityMasterId;
+                                        objEF.PreviousFacility = PreviousFacility;
+                                        objEF.EnterpriseId = EnterpriseID;
+                                        objEF.IsSEZ = lmatchedQulifications[0].IsSEZ;
+                                        objEF.IsSiteChanged = siteRes;
+                                        objEF.Status = Constant.Resolved;
+                                        objEF.IsQualified = lmatchedQulifications[0].IsQualified;
+
+                                        lstUpdateEF.Add(objEF);
+                                    }
+                                    else
+                                    {
+                                        EmployeeFacilityMasterId = Convert.ToInt32(item.EmployeeFacilityMasterId);
+                                        FacilityName = Convert.ToString(item.FacilityName);
+                                        FacilityCode = Convert.ToString(item.FacilityCode);
+
+                                        UpdateEmployeeFacilityModel objEF = new UpdateEmployeeFacilityModel();
+                                        objEF.EmployeeFacilityMasterId = EmployeeFacilityMasterId;
+                                        objEF.AbacusProjectID = Convert.ToInt32(item.AbacusProjectID);
+                                        objEF.AbacusProjectName = projectname;
+                                        objEF.City = item.City;
+                                        objEF.FacilityCode = FacilityCode;
+                                        objEF.FacilityName = FacilityName;
+                                        objEF.EnterpriseId = Convert.ToString(item.EnterpriseId);
+                                        objEF.Status = Constant.Unresolved;
+
+                                        lstUpdateEF.Add(objEF);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    var serviceUrlEF = Convert.ToString(Environment.GetEnvironmentVariable("ServiceApiBaseUrl") + FnSendMessageEF);
+
+                    using (var client = new HttpClient())
+                    {
+                        log.LogInformation($"Aioc Tagging List count at: {DateTime.Now}");
+                        log.LogInformation($"Aioc Tagging List count : {lstUpdateEF.Count}");
+                        var tagcounter = 0;
+
+                        var res = ChunkBy(lstUpdateEF, chunkLimit);
+
+                        foreach (var obj in res)
+                        {
+                            string jsonList1 = JsonConvert.SerializeObject(obj, Formatting.Indented);
+
+                            var httpContent = new StringContent(jsonList1.ToString(), Encoding.UTF8, "application/json");
+
+                            HttpResponseMessage responseFromAnotherFunction = await client.PostAsync(serviceUrlEF, httpContent);
+                            if (responseFromAnotherFunction.IsSuccessStatusCode)
+                            {
+                                tagcounter = tagcounter + 1;
+                            }
+                        }
+
+                        log.LogInformation($"Aioc Tagging List count sent to queue : {tagcounter}");
+                    }
+                }
+                log.LogInformation($"Aioc Tagging method Ended at: {DateTime.Now}");
+            }
+            catch (Exception ex)
+            {
+                log.LogInformation("Error in Aioc Tagging method " + ex.ToString());
+                throw ex;
+            }
+            return lresult;
+        }
+        public async Task<int> siteChangedCheck(List<FacilityLeadApprovalModel> lstLeadApproval, string PreviousFacility, string FacilityName, ILogger log)
+        {
+
+            //log.LogInformation("Information:API Call: " + "old: " + PreviousFacility + ", new: " + FacilityName);
+            int siteRes = 0;
+            if (PreviousFacility == null || PreviousFacility == string.Empty)
+            {
+                siteRes = Constant.SiteChanged;
+            }
+            else if (FacilityName == null || FacilityName == string.Empty)
+            {
+                siteRes = Constant.SiteNotChanged;
+            }
+            else
+            {
+                SiteModel oldSiteRes = new SiteModel();
+                SiteModel newSiteRes = new SiteModel();
+                if (lstLeadApproval != null)
+                {
+                    oldSiteRes.FacilityNM = lstLeadApproval.FirstOrDefault(m => m.facilityName == PreviousFacility)?.facilityName ?? string.Empty;
+                    oldSiteRes.Site = lstLeadApproval.FirstOrDefault(m => m.facilityName == PreviousFacility)?.site ?? string.Empty;
+
+                    newSiteRes.FacilityNM = lstLeadApproval.FirstOrDefault(m => m.facilityName == FacilityName)?.facilityName ?? string.Empty;
+                    newSiteRes.Site = lstLeadApproval.FirstOrDefault(m => m.facilityName == FacilityName)?.site ?? string.Empty;
+
+                }
+
+                if (oldSiteRes != null && newSiteRes != null)
+                {
+                    if (oldSiteRes.Site.ToUpper() == newSiteRes.Site.ToUpper())
+                    {
+                        siteRes = Constant.SiteNotChanged;
+                    }
+                    else
+                    {
+                        siteRes = Constant.SiteChanged;
+                    }
+                }
+                else
+                {
+                    siteRes = Constant.SiteNotChanged;
+                    log.LogInformation("Information:API Call: " + "oldsite null:newsite null");
+                }
+            }
+            return siteRes;
+        }
+
+        public async void SendDataToServiceBusFoSNOW(SSOTSnowDataModel ssotSnowDataModel, ILogger log)
+        {
+            try
+            {
+                var client = new HttpClient();
+                log.LogInformation("SendDataToServiceBusFoSNOW for auto resolved  ---- " + ssotSnowDataModel.EnterpriseId);
+                var serviceUrl = Convert.ToString(Environment.GetEnvironmentVariable("ServiceApiBaseUrl") + FnSendEnterpriseIdForSNOW);
+                string ssotSnowDataModelJsonList = JsonConvert.SerializeObject(ssotSnowDataModel, Formatting.Indented);
+                var httpContent = new StringContent(ssotSnowDataModelJsonList.ToString(), Encoding.UTF8, "application/json");
+                log.LogInformation("SendDataToServiceBusFoSNOW for auto resolved  ---- " + ssotSnowDataModelJsonList);
+                HttpResponseMessage responseFromAnotherFunction = await client.PostAsync(serviceUrl, httpContent);
+                log.LogInformation("SendDataToServiceBusFoSNOW for auto resolved  ---- Done-- " + ssotSnowDataModel.EnterpriseId);
+            }
+            catch (Exception ex)
+            {
+                log.LogInformation("SendDataToServiceBusFoSNOW for auto resolved" + ex.ToString());
+            }
+        }
+        public async Task<List<QualifiedFacilitiesModel>> GetProjectFacMasterForAioc(int abacusProjectId)
+        {
+            List<QualifiedFacilitiesModel> lstQulifiedfacilities = new List<QualifiedFacilitiesModel>();
+
+            try
+            {
+                var lstQulifiedFacilities = await _iemployeeFacilityHelper.GetProjectFacilityMasterForAioc(abacusProjectId);
+                if (lstQulifiedFacilities.Rows.Count > 0)
+                {
+                    foreach (DataRow rows in lstQulifiedFacilities.Rows)
+                    {
+                        QualifiedFacilitiesModel QF = new QualifiedFacilitiesModel();
+                        QF.AbacusProjectID = Convert.ToInt32(rows["AbacusProjectId"]);
+                        QF.AbacusProjectName = Convert.ToString(rows["ProjectNm"]);
+                        QF.FacilityName = Convert.ToString(rows["FacilityNm"]);
+                        QF.IsQualified = Convert.ToInt32(rows["IsQualified"]);
+                        QF.FacilityCode = Convert.ToString(rows["FacilityCd"]);
+                        QF.City = Convert.ToString(rows["city"]);
+                        QF.Entity = Convert.ToString(rows["Entity"]);
+                        QF.IsDefault = Convert.ToInt32(rows["IsDefault"]);
+                        lstQulifiedfacilities.Add(QF);
+
+
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                await errorLog.ErrorDBLog(ex.ToString(), "Select");
+            }
+            return lstQulifiedfacilities;
+
+        }
+        public async Task<List<EMPFailityMasterModel>> GetEmpFacMasterForAioc(int abacusProjectId)
+        {
+            List<EMPFailityMasterModel> lstEMPfacilities = new List<EMPFailityMasterModel>();
+
+            try
+            {
+                var lstEmployeeFacilities = await _iemployeeFacilityHelper.GetEmployeeFacilityMasterForAioc(abacusProjectId);
+                if (lstEmployeeFacilities.Rows.Count > 0)
+                {
+                    foreach (DataRow rows in lstEmployeeFacilities.Rows)
+                    {
+                        EMPFailityMasterModel EF = new EMPFailityMasterModel();
+                        EF.AbacusProjectID = Convert.ToInt32(rows["AbacusProjectId"]);
+                        EF.FacilityName = Convert.ToString(rows["FacilityNm"]);
+                        EF.FacilityCode = Convert.ToString(rows["FacilityCd"]);
+                        EF.City = Convert.ToString(rows["city"]);
+                        EF.EmployeeFacilityMasterId = Convert.ToInt32(rows["EmployeeFacilityMasterId"]);
+                        EF.EnterpriseId = Convert.ToString(rows["EnterpriseId"]);
+                        EF.PreviousFacility = Convert.ToString(rows["PreviousFacility"]);
+                        EF.PreviousFacilityCd = Convert.ToString(rows["PreviousFacilityCd"]);
+                        EF.ServiceNowMasterID = Convert.ToString(rows["ServiceNowMasterID"]);
+                        lstEMPfacilities.Add(EF);
+
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                await errorLog.ErrorDBLog(ex.ToString(), "Select");
+            }
+            return lstEMPfacilities;
+
+        }
+
+        public async Task<string> UpdateEmployeeFacNm(ILogger log, List<QualifiedFacilitiesModel> lstQfacilities)
+        {
+            int lresult = 0;
+            int projectId = 0;
+            string Entity = string.Empty;
+            string FacilityName = string.Empty;
+            string FacilityCode = string.Empty;
+            string City = string.Empty;
+            List<QualifiedFacilitiesModel> filteredProjectData = new List<QualifiedFacilitiesModel>();
+
+            string jsonListPr = JsonConvert.SerializeObject(lstQfacilities, Formatting.Indented);
+
+            filteredProjectData = lstQfacilities.Where(p => p.IsDefault == 1).ToList();
+
+            string jsonList = JsonConvert.SerializeObject(filteredProjectData, Formatting.Indented);
+            log.LogInformation("Information:API Call: " + " isDefaultData " + jsonList);
+            if (filteredProjectData.Count > 0)
+            {
+                log.LogInformation("Information:API Call: " + " isDefault avl. ");
+                foreach (var item in filteredProjectData)
+                {
+                    FacilityName = Convert.ToString(item.FacilityName);
+                    FacilityCode = Convert.ToString(item.FacilityCode);
+                    projectId = item.AbacusProjectID;
+                    City = Convert.ToString(item.City);
+                    Entity = Convert.ToString(item.Entity);
+                    var EnterpriseId = await _iemployeeFacilityHelper.GetEnterpriseIdEntity(projectId, City, Entity);
+                    lresult = await _iemployeeFacilityHelper.UpdateEmployee(FacilityName, FacilityCode, projectId, City, Entity);
+                    if (EnterpriseId.Rows.Count > 0)
+                    {
+                        foreach (DataRow rows in EnterpriseId.Rows)
+                        {
+                            string Enterpriseid = Convert.ToString(rows["EnterpriseId"]);
+                            int EmpMasterId = Convert.ToInt32(rows["EmployeeFacilityMasterId"]);
+                            int resInsert = await InsertEmpFacilityMasterHistoryByEnterpriseId(Enterpriseid, Constant.updateActionType, Constant.system, Constant.updateComment, log);
+                        }
+                    }
+                }
+
+
+            }
+            if (lresult != 0)
+            {
+                return Constant.successMsg;
+            }
+            else
+            {
+                return Constant.failureMsg;
+                ;
+            }
+
+        }
+        public async Task<List<AcpProjectIdModel>> GetAcpProjectIds(ILogger log)
+        {
+            List<AcpProjectIdModel> acpProjectList = null;
+            try
+            {
+                acpProjectList = await _iemployeeFacilityHelper.GetAcpProjectIds(log);
+
+                return acpProjectList;
+            }
+            catch (Exception ex)
+            {
+                log.LogInformation(ex.ToString());
+                throw ex;
+            }
+
+        }
+
+        public async Task<object> ProcessProjectUpload(HttpRequest req, ILogger log)
+        {
+            DataAccess baseService = new DataAccess();
+            string Message = string.Empty;
+            string uploadby = Convert.ToString(req.Query["uploadby"]);
+            IFormFile file = req.Form.Files[0];
+            String fileName = file.FileName;
+            int DataSourceId = Convert.ToInt32(req.Query["datasourceid"]);
+            Stream stream = file.OpenReadStream();
+            IExcelDataReader reader = null;
+            int Fileid = Convert.ToInt32(req.Query["Fileid"]);
+            string FileuploadSuccessMessage = Constant.lfileuploadsuccessMessage;
+            int iresult = 0;
+            List<ProjectIdModel> objProject = new List<ProjectIdModel>();
+            int pocGpId = 0, sdlGpId = 0;
+            if (file.FileName.EndsWith(".xlsx"))
+            {
+                reader = ExcelReaderFactory.CreateOpenXmlReader(stream);
+            }
+            var conf = new ExcelDataSetConfiguration()
+            {
+                ConfigureDataTable = (tableReader) => new ExcelDataTableConfiguration()
+                {
+                    UseHeaderRow = true //THIS IS WHAT YOU ARE AFTER
+                }
+            };
+            DataSet excelRecords = reader.AsDataSet(conf);
+            reader.Read();
+            reader.Close();
+            var finalRecords = excelRecords.Tables[0];
+
+            if (finalRecords.Rows.Count > 0)
+            {
+                try
+                {
+                    int iresultError = 0;
+                    string fileNM = _iazureCommon.UploadFile(fileName, file, Constant.nonatci);
+
+                    string err_msg = string.Empty;
+                    string ischeck = string.Empty;
+                    List<ErrorModel> invalidlist = new List<ErrorModel>();
+                    List<ErrorModel> validlist = new List<ErrorModel>();
+                    List<string> EmsgList = new List<string>();
+                    DataTable invalid;
+                    DataTable Valid;
+                    for (int i = 0; i < finalRecords.Rows.Count; i++)
+                    {
+                        string entity = Convert.ToString(finalRecords.Rows[i]["Entity"]).Trim();
+                        int ProjectId = Convert.ToInt32(string.IsNullOrEmpty(finalRecords.Rows[i]["ProjectID"].ToString().Trim()) ? "0" : finalRecords.Rows[i]["ProjectID"].ToString().Trim());
+                        string projectCd = Convert.ToString(finalRecords.Rows[i]["ProjectCode"]).Trim();
+                        string poc = Convert.ToString(finalRecords.Rows[i]["POC"]).Trim();
+                        string sdl = Convert.ToString(finalRecords.Rows[i]["SDL"]).Trim();
+
+                        int row = i + 2;
+                        ErrorModel Erow = new ErrorModel();
+                        if ((entity == null
+                            || entity == "")
+                            && (poc == null
+                            || poc == "")
+                            && (sdl == null
+                            || sdl == "")
+                            && (projectCd == null
+                            || projectCd == ""))
+                        {
+                            continue;
+                        }
+                        else if ((entity == null
+                            || entity == ""))
+                        {
+
+                            err_msg = Constant.EntityBlank + row;
+                            Erow.ErrorReason = err_msg;
+                            Erow.Entity = entity;
+                            Erow.ProjectId = ProjectId;
+                            Erow.ProjectCode = projectCd;
+                            Erow.POC = poc;
+                            Erow.SDL = sdl;
+                            invalidlist.Add(Erow);
+
+                        }
+                        else if (string.IsNullOrEmpty(projectCd))
+                        {
+                            err_msg = Constant.ProjectCodeBlank + row;
+                            Erow.ErrorReason = err_msg;
+                            Erow.Entity = entity;
+                            Erow.ProjectId = ProjectId;
+                            Erow.ProjectCode = projectCd;
+                            Erow.POC = poc;
+                            Erow.SDL = sdl;
+                            invalidlist.Add(Erow);
+                        }
+                        else if (poc == null
+                            || poc == "")
+                        {
+                            err_msg = Constant.PocBlank + row;
+                            Erow.ErrorReason = err_msg;
+                            Erow.Entity = entity;
+                            Erow.ProjectId = ProjectId;
+                            Erow.ProjectCode = projectCd;
+                            Erow.POC = poc;
+                            Erow.SDL = sdl;
+                            invalidlist.Add(Erow);
+                        }
+                        else if (sdl == null || sdl == "")
+                        {
+                            err_msg = Constant.SdlBlank + row;
+                            Erow.ErrorReason = err_msg;
+                            Erow.Entity = entity;
+                            Erow.ProjectId = ProjectId;
+                            Erow.ProjectCode = projectCd;
+                            Erow.POC = poc;
+                            Erow.SDL = sdl;
+                            invalidlist.Add(Erow);
+                        }
+                        else if (!string.IsNullOrEmpty(projectCd))
+                        {
+                            Erow.Entity = finalRecords.Rows[i]["Entity"].ToString().Trim();
+                            Erow.ProjectId = await GetDCSOProjectId(projectCd, entity);
+                            Erow.POC = finalRecords.Rows[i]["POC"].ToString();
+                            Erow.SDL = finalRecords.Rows[i]["SDL"].ToString();
+                            Erow.ProjectCode = finalRecords.Rows[i]["ProjectCode"].ToString();
+
+                            objProject = await _iemployeeFacilityHelper.GetProjectDetailsIdByEntity(Erow.ProjectId, entity);
+                            foreach (var proj in objProject)
+                            {
+                                POCServiceQueueModel objPOC = new POCServiceQueueModel();
+                                objPOC.ProjectDetailsId = proj.ProjectDetailsId;
+                                objPOC.LocationId = proj.LocationId;
+                                objPOC.POC = Erow.POC;
+                                objPOC.SDL = Erow.SDL;
+
+                                var serviceUrlEF = Convert.ToString(Environment.GetEnvironmentVariable("ServiceApiBaseUrl") + FnSendMessagePocUpload);
+                                using (var client = new HttpClient())
+                                {
+                                    string jsonList = JsonConvert.SerializeObject(objPOC, Formatting.Indented);
+                                    var httpContent = new StringContent(jsonList.ToString(), Encoding.UTF8, "application/json");
+                                    HttpResponseMessage responseFromAnotherFunction = await client.PostAsync(serviceUrlEF, httpContent);
+                                }
+
+                            }
+                            validlist.Add(Erow);
+                        }
+                    }
+                    invalid = objDAL.ToDataTable(invalidlist);
+                    Valid = objDAL.ToDataTable(validlist);
+                    EmployeeFacilityMapping objEmp = new EmployeeFacilityMapping(_iemployeefacilitymapping, _iazureCommon);
+                    if (invalid.Rows.Count != 0)
+                    {
+                        iresultError = await InsertInvalidProject(invalid, Fileid);
+                        await objEmp.ErrorFileUpload(Fileid, Constant.projectError);
+                    }
+                    if (Valid.Rows.Count != 0)
+                    {
+                        iresult = await UploadProject(Valid, DataSourceId, uploadby);
+                    }
+                    if (iresultError == 1)
+                    {
+                        int iResult = await _iemployeeFacilityHelper.UpdateUploadFileStatus(Fileid, Constant.Processfailure);
+                        return new Responce
+                        {
+                            Status = "Error",
+                            Message = Constant.invalidlistErrorMsg
+                        };
+                    }
+                    else if (iresult == 1)
+                    {
+                        int iResult = await _iemployeeFacilityHelper.UpdateUploadFileStatus(Fileid, Constant.SUCCESS);
+                        return new Responce
+                        { Status = "Success", Message = FileuploadSuccessMessage };
+                    }
+
+                    else
+                    {
+                        int iResult = await _iemployeeFacilityHelper.UpdateUploadFileStatus(Fileid, Constant.FAILURE);
+                        if (iresultError == 0)
+                        {
+                            return new Responce
+                            {
+                                Status = "Error",
+                                Message = Constant.invalidlistErrorFMsg
+                            };
+                        }
+                        else
+                        {
+                            return new Responce
+                            { Status = "Error", Message = Constant.UFacilityError };
+                        }
+
+                    }
+                }
+                catch (Exception ex)
+                {
+                    int iResult = await _iemployeeFacilityHelper.UpdateUploadFileStatus(Fileid, Constant.Errorprocess);
+                    log.LogInformation("Error: " + ex.ToString());
+                    return ex.ToString();
+                }
+            }
+            return new Responce
+            { Status = "Success", Message = FileuploadSuccessMessage };
+        }
+
+        public async Task<int> UploadProject(DataTable dt, int datasourceid, string uploadby)
+        {
+            int result = 0;
+            try
+            {
+                int ProjectInputId = 0;
+                DataAccess daservice = new DataAccess();
+                string strConnection = Environment.GetEnvironmentVariable("SqlConnectionString");
+                SqlConnection lCon = new SqlConnection(strConnection);
+                ProjectInputDump pModel = new ProjectInputDump();
+                for (int i = 0; i < dt.Rows.Count; i++)
+                {
+                    pModel.Entity = dt.Rows[i]["Entity"].ToString();
+                    pModel.ProjectId = Convert.ToInt32(dt.Rows[i]["ProjectId"]);
+                    pModel.ProjectCode = dt.Rows[i]["ProjectCode"].ToString();
+                    pModel.POC = dt.Rows[i]["POC"].ToString();
+                    pModel.SDL = dt.Rows[i]["SDL"].ToString();
+
+                    var ProjInputid = await _iemployeeFacilityHelper.InsertIntoProjectDump(pModel.Entity, pModel.ProjectId, pModel.ProjectCode, pModel.POC, pModel.SDL, uploadby, datasourceid);
+
+                    if (ProjInputid.Rows.Count > 0)
+                    {
+                        foreach (DataRow rows in ProjInputid.Rows)
+                        {
+                            ProjectInputId = Convert.ToInt32(rows["ProjectInputId"]);
+
+                            result = await _iemployeeFacilityHelper.InsertintoProjectInputHistory(ProjectInputId);
+
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                return result;
+            }
+
+            return result;
+
+        }
+
+        public async Task<int> InsertInvalidProject(DataTable dt, int fieldid)
+        {
+            int ErrorFileid = 0;
+            try
+            {
+                DataAccess baseService = new DataAccess();
+                ErrorModel Erow = new ErrorModel();
+                for (int i = 0; i < dt.Rows.Count; i++)
+                {
+
+                    Erow.Entity = dt.Rows[i]["Entity"].ToString();
+                    Erow.ProjectId = Convert.ToInt32(dt.Rows[i]["ProjectId"]);
+                    Erow.ProjectCode = dt.Rows[i]["ProjectCode"].ToString();
+                    Erow.POC = dt.Rows[i]["POC"].ToString();
+                    Erow.SDL = dt.Rows[i]["SDL"].ToString();
+                    Erow.ErrorReason = dt.Rows[i]["ErrorReason"].ToString();
+
+                    ErrorFileid = Convert.ToInt32(await _iemployeeFacilityHelper.InsertInvalidProjectData(Erow.Entity, Erow.ProjectId, Erow.ProjectCode, Erow.POC, Erow.SDL, Erow.ErrorReason, fieldid));
+                }
+            }
+            catch (Exception ex)
+            {
+                throw ex;
+            }
+            return ErrorFileid;
+        }
+        public async Task<int> GetDCSOProjectId(string projectCd, string entity)
+        {
+            var dcsoProjectId = await _iemployeeFacilityHelper.GetDcsoProjectIdMaster(projectCd, entity);
+            int dcsoId = 0;
+            if (dcsoProjectId.Rows.Count > 0)
+            {
+                dcsoId = Convert.ToInt32(dcsoProjectId.Rows[0]["AbacusProjectId"]);
+            }
+            return dcsoId;
+        }
+
+        public async Task<string> SendBizOPsMail(List<UpdateEmployeeFacilityModel> lstEmployeeFacilities, ILogger log)
+        {
+            string resMail = null;
+            try
+            {
+                //var lstEmployeefacilities = await GetEmployeeFacilityForBizOPsMail(); // get from list prepared
+                foreach (var item in lstEmployeeFacilities)
+                {
+                    var resClientDetail = await _iazureCommon.GetClientMarketName(item.AbacusProjectID, log);
+                    resMail = await _iazureCommon.EscalationBizOpsLeadNotification(Constant.bizOpsRole, resClientDetail.ClientName, resClientDetail.MarketName, item.AbacusProjectName, item.City, item.FacilityName, log);
+                }
+                return resMail;
+            }
+            catch (Exception ex)
+            {
+                log.LogInformation(ex.ToString());
+                throw ex;
+            }
+        }
+        public async Task<string> SendFinanceMail(List<UpdateEmployeeFacilityModel> lstEmployeeFacilities, ILogger log)
+        {
+            string resMail = null;
+            try
+            {
+                //var lstEmployeefacilities = await GetEmployeeFacilityForBizOPsMail(); // get from list prepared
+                foreach (var item in lstEmployeeFacilities)
+                {
+                    var resClientDetail = await _iazureCommon.GetClientMarketName(item.AbacusProjectID, log);
+                    resMail = await _iazureCommon.EscalationBizOpsLeadNotification(Constant.financeRole, resClientDetail.ClientName, resClientDetail.MarketName, item.AbacusProjectName, item.City, item.FacilityName, log);
+                }
+                return resMail;
+            }
+            catch (Exception ex)
+            {
+                log.LogInformation(ex.ToString());
+                throw ex;
+            }
+        }
+        public async Task<List<EmpFacBizOpsMailModel>> GetEmployeeFacilityForBizOPsMail()
+        {
+            List<EmpFacBizOpsMailModel> lstEMPfacilities = new List<EmpFacBizOpsMailModel>();
+            try
+            {
+                var lstEmployeeFacilities = await _iemployeeFacilityHelper.GetEmployeeFacilityForBizOPsMail();
+                if (lstEmployeeFacilities.Rows.Count > 0)
+                {
+                    foreach (DataRow rows in lstEmployeeFacilities.Rows)
+                    {
+                        EmpFacBizOpsMailModel objModel = new EmpFacBizOpsMailModel();
+                        objModel.EmpAbacusProjectID = Convert.ToInt32(rows["EmpAbacusProjectID"]);
+                        objModel.ProjectNm = Convert.ToString(rows["ProjectNm"]);
+                        objModel.Empcity = Convert.ToString(rows["Empcity"]);
+                        objModel.EmpFacilityNm = Convert.ToString(rows["EmpFacilityNm"]);
+                        lstEMPfacilities.Add(objModel);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                await errorLog.ErrorDBLog(ex.ToString(), "Select");
+            }
+            return lstEMPfacilities;
+        }
+
+        public async Task<int> UpdateSiteLevelFacility(string FacilityNm, string city, int abcusProjectId, ILogger log)
+        {
+            int resForProjNm = 0;
+            try
+            {
+                SiteModel lsite = new SiteModel();
+                lsite = await _iazureCommon.GetSiteByFacilityNm(FacilityNm, log);
+                string siteName = lsite.Site;
+                var sitelist = await _iazureCommon.GetFacilityBySite(siteName, log);
+                foreach (var item2 in sitelist)
+                {
+                    string FacilityName = item2.FacilityNM;
+                    var resExistRecord = await _iazureCommon.CheckRecordExistInProjFacility(abcusProjectId, city, FacilityName);
+                    if (resExistRecord.Rows.Count > 0)
+                    {
+                        resForProjNm = await _iazureCommon.UpdatePROJFacilityMasterIsQualified(abcusProjectId, city, FacilityName, Constant.isQualifiedOne);
+                    }
+                }
+                return resForProjNm;
+            }
+            catch (Exception ex)
+            {
+                log.LogInformation(ex.ToString());
+                throw ex;
+            }
+        }
+        public async Task<string> GetFacilityCode(string GetFacilityCode)
+        {
+            var facilityCd = await _iemployeeFacilityHelper.GetFacilityCode(GetFacilityCode);
+            string facCd = string.Empty;
+            if (facilityCd.Rows.Count > 0)
+            {
+                facCd = facilityCd.Rows[0]["FacilityCd"].ToString();
+            }
+            return facCd;
+        }
+
+
+        public async Task<int> InsertEmpFacilityMasterHistory(int EmpFacMasterId, string ActionType, string ActionBy, string comment, ILogger log)
+        {
+            try
+            {
+                int iResult = 0;
+                iResult = await _iemployeeFacilityHelper.InsertEmployeeDataHistory(EmpFacMasterId, ActionType, ActionBy, comment);
+                if (iResult > 0)
+                {
+                    return iResult;
+                }
+                else
+                {
+                    return iResult;
+                }
+            }
+            catch (Exception ex)
+            {
+                log.LogInformation(ex.ToString());
+                throw ex;
+            }
+        }
+        public async Task<int> InsertEmpFacilityMasterHistoryByEnterpriseId(string EnterpriseId, string ActionType, string ActionBy, string comment, ILogger log)
+        {
+            try
+            {
+                int iResult = 0;
+                iResult = await _iemployeeFacilityHelper.InsertEmployeeDataHistoryByEnterPriseId(EnterpriseId, ActionType, ActionBy, comment);
+                if (iResult > 0)
+                {
+                    return iResult;
+                }
+                else
+                {
+                    return iResult;
+                }
+            }
+            catch (Exception ex)
+            {
+                log.LogInformation(ex.ToString());
+                throw ex;
+            }
+        }
+
+        public async Task<EMPFailityMasterModel> GetEmployeeFacilityMasterId(string EnterpriseId, ILogger log)
+        {
+            try
+            {
+                var iResult = await _iemployeeFacilityHelper.GetEmployeeFacilityMasterId(EnterpriseId);
+                int empMasterId = 0;
+                EMPFailityMasterModel empFailityMasterModel = new EMPFailityMasterModel();
+                if (iResult.Rows.Count > 0)
+                {
+                    empFailityMasterModel.EmployeeFacilityMasterId = Convert.ToInt32(iResult.Rows[0]["EmployeeFacilityMasterId"]);
+                    empFailityMasterModel.City = iResult.Rows[0]["City"].ToString();
+                    empFailityMasterModel.AbacusProjectID = Convert.ToInt32(iResult.Rows[0]["AbacusProjectID"]);
+                }
+                return empFailityMasterModel;
+            }
+            catch (Exception ex)
+            {
+                log.LogInformation(ex.ToString());
+                throw ex;
+            }
+        }
+
+        public async Task<int> InsertServiceNowMasterByEnterpriseId(EmployeeFacilityMaster employeeFacilityMaster, ILogger log)
+        {
+            try
+            {
+                int iResult = 0;
+                string correlationId = GetCorrelationId(employeeFacilityMaster.EmployeeFacilityMasterId, log);
+                iResult = await _iemployeeFacilityHelper.InsertServiceNowMasterByEnterpriseId(employeeFacilityMaster, correlationId, employeeFacilityMaster.City);
+                if (iResult > 0)
+                {
+                    return iResult;
+                }
+                else
+                {
+                    return iResult;
+                }
+            }
+            catch (Exception ex)
+            {
+                log.LogInformation(ex.ToString());
+                throw ex;
+            }
+        }
+
+        public async Task<int> InsertServiceNowDetailByEnterpriseId(EmployeeFacilityMaster employeeFacilityMaster, int serviceNowMasterId, ILogger log)
+        {
+            try
+            {
+                int iResult = 0;
+                //Consumables logic
+                // employeeFacilityMaster.ConsumablesHeadset = 'N';
+                if ((employeeFacilityMaster.Consumables != null) && (!employeeFacilityMaster.Consumables.Any()))
+                {
+                    if (employeeFacilityMaster.Consumables.Contains("Headset"))
+                    {
+                        employeeFacilityMaster.ConsumablesHeadset = 'Y';
+                    }
+                    if (employeeFacilityMaster.Consumables.Contains("Keyboard"))
+                    {
+                        employeeFacilityMaster.ConsumablesKeyboard = 'Y';
+                    }
+                    if (employeeFacilityMaster.Consumables.Contains("Monitor"))
+                    {
+                        employeeFacilityMaster.ConsumablesMonitor = 'Y';
+                    }
+                    if (employeeFacilityMaster.Consumables.Contains("Mouse"))
+                    {
+                        employeeFacilityMaster.ConsumablesMouse = 'Y';
+                    }
+                    if (employeeFacilityMaster.Consumables.Contains("Others"))
+                    {
+                        employeeFacilityMaster.ConsumablesOthers = 'Y';
+                    }
+                }
+                //isNewJOinerLogic
+                //employeeFacilityMaster.IsNewJonier = 'N';
+                if (!String.IsNullOrEmpty(employeeFacilityMaster.ResourceStatus) && String.Equals(employeeFacilityMaster.ResourceStatus.ToLower(), "J".ToLower()))
+                {
+                    employeeFacilityMaster.IsNewJonier = 'Y';
+                }
+                else if (!String.IsNullOrEmpty(employeeFacilityMaster.ResourceStatus) && String.Equals(employeeFacilityMaster.ResourceStatus.ToLower(), "O".ToLower()))
+                {
+                    employeeFacilityMaster.IsNewJonier = 'N';
+                }
+                //wONT DO IsNewJoiner as 'N'
+                iResult = await _iemployeeFacilityHelper.InsertServiceNowDetailByEnterpriseId(employeeFacilityMaster, serviceNowMasterId);
+                if (iResult > 0)
+                {
+                    return iResult;
+                }
+                else
+                {
+                    return iResult;
+                }
+            }
+            catch (Exception ex)
+            {
+                log.LogInformation(ex.ToString());
+                throw ex;
+            }
+        }
+
+        public async Task<int> UpdateServiceNowMasterIdInEmployeeFacilityMaster(EmployeeFacilityMaster employeeFacilityMaster, int serviceNowMasterId, ILogger log)
+        {
+            try
+            {
+                int iResult = 0;
+                iResult = await _iemployeeFacilityHelper.UpdateServiceNowMasterIdInEmployeeFacilityMaster(serviceNowMasterId, employeeFacilityMaster.EnterpriseId);
+                if (iResult > 0)
+                {
+                    return iResult;
+                }
+                else
+                {
+                    return iResult;
+                }
+            }
+            catch (Exception ex)
+            {
+                log.LogInformation(ex.ToString());
+                throw ex;
+            }
+        }
+
+
+
+       
+
+        public async Task<string> GetEmployeeEnterpriseIds(ILogger log)
+        {
+            List<SSOTSeatSLModel> lstSLModel = new List<SSOTSeatSLModel>();
+
+            List<string> EnterpriseIdList = new List<string>();
+
+            EnterpriseIdList = await _iemployeeFacilityHelper.GetResignedEmployeesList();
+
+            log.LogInformation("Information:Get records from EnterpriseIdList: " + EnterpriseIdList.Count);
+            if (EnterpriseIdList.Count > 0)
+            {
+                foreach (var eId in EnterpriseIdList)
+                {
+                    var projid = await _iemployeeFacilityHelper.GetAbacusProjID(eId);
+                    log.LogInformation("Information:Get records from projid: " + projid.Rows.Count);
+                    if (projid.Rows.Count > 0)
+                    {
+                        int projectId = Convert.ToInt32(projid.Rows[0]["AbacusProjectID"].ToString());
+                        int resInsert = await InsertEmpFacilityMasterHistoryByEnterpriseId(eId, Constant.deleteActionType, Constant.system, Constant.deleteResignedComment, log);
+                        if (resInsert == 0)
+                        {
+                            log.LogInformation("Information:Get records from InsertintoHistoryFails: " + eId);
+                        }
+                        var delRes = await _iemployeeFacilityHelper.DeleteResignedEmployees(eId);
+
+                        //@locFlex = 1 for location flex, 0 for Intermediate indvidual seat 
+                        lstSLModel = await _iazureCommon.DelinkSeat(eId,Constant.IsSezZero, log);
+
+                        
+                        log.LogInformation("Information:Get records from lstSLModel.Count: " + lstSLModel.Count);
+
+                        if (lstSLModel.Count > 0)
+                        {
+                            string SeatNo = lstSLModel[0].SEATNAME;
+                            string Project = lstSLModel[0].PROJECT;
+                            string Location = lstSLModel[0].PROJECTLOCATION;
+                            string SeatStatus = lstSLModel[0].SeatStatus;
+                            log.LogInformation("SeatStatus of Enterprise ID: " + eId + SeatStatus);
+                            if (SeatNo != "NA" && Project != "NA" && Location != "NA" && SeatStatus != "NA")
+                            {
+                                if (SeatStatus == Constant.HL)
+                                {
+                                    string result = await _iazureCommon.MailToPocByAutoSeatReleaseForResignEmp(log, projectId, eId, SeatNo, Project, Location);
+                                }
+                            }
+
+                        }
+                    }
+                }
+
+            }
+            return Constant.OK;
+        }
+
+        public async Task<int> AddPreviousFacility(int EmpFacMastId, ILogger log)
+        {
+            int res = 0;
+            int resUpdate = 0;
+            try
+            {
+                var existRecord = await _iemployeeFacilityHelper.CheckExistRecordEmplyeeFacility(EmpFacMastId);
+                if (existRecord.Rows.Count > 0)
+                {
+                    int EmployeeFacilityMasterId = Convert.ToInt32(existRecord.Rows[0]["EmployeeFacilityMasterId"].ToString());
+                    string FacilityNm = existRecord.Rows[0]["FacilityNm"].ToString();
+                    string facilityCd = existRecord.Rows[0]["facilityCd"].ToString();
+                    int AbacusProjectID = Convert.ToInt32(existRecord.Rows[0]["AbacusProjectID"].ToString());
+                    var resIsSez = await _iemployeeFacilityHelper.CheckRecordIsSEZ(AbacusProjectID, FacilityNm);
+                    if (resIsSez.Rows.Count > 0)
+                    {
+                        int isSez = Convert.ToInt32(resIsSez.Rows[0]["IsSEZ"].ToString());
+                        resUpdate = await _iemployeeFacilityHelper.UpdatePreviousFacility(EmployeeFacilityMasterId, FacilityNm, facilityCd, isSez);
+                    }
+                    if (resUpdate > 0)
+                    {
+                        res = 1;
+                    }
+                    else
+                    {
+                        res = 0;
+                    }
+                }
+                return res;
+            }
+            catch (Exception ex)
+            {
+                log.LogInformation(ex.ToString());
+                throw ex;
+            }
+        }
+
+        public async Task<List<AllLocationModel>> GetAllLocations()
+        {
+            List<AllLocationModel> objList = new List<AllLocationModel>();
+            try
+            {
+                objList = await _iemployeeFacilityHelper.GetAllLocations();
+            }
+            catch (WebException ex)
+            {
+                if (ex.Status != WebExceptionStatus.ProtocolError)
+                {
+                    throw ex;
+                }
+            }
+            catch (Exception ex)
+            {
+                throw ex;
+            }
+            return objList;
+        }
+
+        //UpdateServiceNowDetailTable
+        public async Task<int> UpdateServiceNowDetailTable(EmployeeFacilityMaster employeeFacilityMaster, int serviceNowMasterId, ILogger log)
+        {
+            try
+            {
+                int iResult = 0;
+                //Consumables logic
+                employeeFacilityMaster.ConsumablesHeadset = 'N';
+                employeeFacilityMaster.ConsumablesKeyboard = 'N';
+                employeeFacilityMaster.ConsumablesMonitor = 'N';
+                employeeFacilityMaster.ConsumablesMouse = 'N';
+                employeeFacilityMaster.ConsumablesOthers = 'N';
+                if ((employeeFacilityMaster.Consumables != null) && (employeeFacilityMaster.Consumables.Any()))
+                {
+                    if (employeeFacilityMaster.Consumables.Contains("Headset"))
+                    {
+                        employeeFacilityMaster.ConsumablesHeadset = 'Y';
+                    }
+                    if (employeeFacilityMaster.Consumables.Contains("Keyboard"))
+                    {
+                        employeeFacilityMaster.ConsumablesKeyboard = 'Y';
+                    }
+                    if (employeeFacilityMaster.Consumables.Contains("Monitor"))
+                    {
+                        employeeFacilityMaster.ConsumablesMonitor = 'Y';
+                    }
+                    if (employeeFacilityMaster.Consumables.Contains("Mouse"))
+                    {
+                        employeeFacilityMaster.ConsumablesMouse = 'Y';
+                    }
+                    if (employeeFacilityMaster.Consumables.Contains("Others"))
+                    {
+                        employeeFacilityMaster.ConsumablesOthers = 'Y';
+                    }
+                }
+                iResult = await _iemployeeFacilityHelper.UpdateServiceNowDetailTable(employeeFacilityMaster, serviceNowMasterId);
+                if (iResult > 0)
+                {
+                    return iResult;
+                }
+                else
+                {
+                    return iResult;
+                }
+            }
+            catch (Exception ex)
+            {
+                log.LogInformation(ex.ToString());
+                throw ex;
+            }
+        }
+        public string GetCorrelationId(int employeefacilityMasterId, ILogger log)
+        {
+            string id = "";
+            try
+            {
+                id = Convert.ToString(randomNumber()) + employeefacilityMasterId;
+            }
+            catch (Exception ex)
+            {
+                log.LogError(ex.ToString(), "GetCorrelationId");
+                throw ex;
+            }
+            return id;
+        }
+        public int randomNumber()
+        {
+
+            RNGCryptoServiceProvider provider = new RNGCryptoServiceProvider();
+            var byteArray = new byte[4];
+            provider.GetBytes(byteArray);
+            //convert 4 bytes to an integer
+            string randomInteger = Convert.ToString(BitConverter.ToUInt32(byteArray, 0));
+            return (Convert.ToInt32(randomInteger.Substring(0, 5)));
+        }
+    }
+}
+
+
+
