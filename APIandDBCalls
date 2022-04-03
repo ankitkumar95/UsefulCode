@@ -1,0 +1,1391 @@
+using System;
+using System.Collections.Generic;
+using System.Text;
+using ACPEmployeeFacility.Model;
+using ACPEmployeeFacility.Interfaces;
+using System.Data;
+using System.Threading.Tasks;
+using ACPEmployeeFacility.Core;
+using System.Data.SqlClient;
+using System.Net;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
+using Microsoft.Extensions.Logging;
+using System.Net.Http;
+using System.Net.Http.Headers;
+using static ACPEmployeeFacility.Core.WBSEService;
+
+namespace ACPEmployeeFacility.BusinessLogic
+{
+    public class EmployeeFacilityHelperDetails : IEmployeeFacilityHelper
+    {
+        public const string FnGetAcpProjectIds = "Project/GetAcpProjectIds";
+        DataAccess daservice = new DataAccess();
+        string AccountServiceUrl = string.Format(Environment.GetEnvironmentVariable("AccountServiceUrl"));
+        string ProjectServiceUrl = string.Format(Environment.GetEnvironmentVariable("ProjectServiceUrl"));
+        string InventoryServiceUrl = string.Format(Environment.GetEnvironmentVariable("InventoryServiceUrl"));
+        ILogger log;
+
+        public async Task<DataTable> InsertintoDump(string EnterpriseId, string FacilityNm,string Entity,string Project, string uploadby,int datasourceid, int projectId, string City, string facilityCd)
+        {
+            DataAccess daservice = new DataAccess();
+            string strQuery =
+                       "INSERT INTO EmployeeInputDump(EnterpriseId,FacilityNm,DataSourceId,IsActive,UploadedBy,UploadedDttm,Entity,Project,ProjectId,City,FacilityCode) output INSERTED.EmployeeInputId values(@EnterpriseId,@FacilityNm,@DataSourceId,@IsActive,@UploadedBy,@UploadedDttm,@Entity,@Project,@ProjectId,@City,@FacilityCode) ";
+            SqlParameter EnterprId = new SqlParameter("@EnterpriseId", SqlDbType.VarChar) { Value =EnterpriseId };
+            SqlParameter FacilityName = new SqlParameter("@FacilityNm", SqlDbType.VarChar) { Value = FacilityNm };
+            SqlParameter DataSourceId = new SqlParameter("@DataSourceId", SqlDbType.Int) { Value = datasourceid };
+            SqlParameter IsActive = new SqlParameter("@IsActive", SqlDbType.Bit) { Value = 1 };
+            SqlParameter UploadedBy = new SqlParameter("@UploadedBy", SqlDbType.VarChar) { Value = uploadby };
+            SqlParameter UploadedDttm = new SqlParameter("@UploadedDttm", SqlDbType.DateTime) { Value = DateTime.Now };
+            SqlParameter Ent = new SqlParameter("@Entity", SqlDbType.VarChar) { Value = Entity };
+            SqlParameter Proj = new SqlParameter("@Project", SqlDbType.VarChar) { Value = Project };
+            SqlParameter ProjId = new SqlParameter("@ProjectId", SqlDbType.Int) { Value = projectId };
+            SqlParameter cityNm = new SqlParameter("@City", SqlDbType.VarChar) { Value = City };
+            SqlParameter facCd = new SqlParameter("@FacilityCode", SqlDbType.VarChar) { Value = facilityCd };
+
+
+            SqlParameter[] objParams = new SqlParameter[11];
+            objParams[0] = EnterprId;
+            objParams[1] = FacilityName;
+            objParams[2] = DataSourceId;
+            objParams[3] = IsActive;
+            objParams[4] = UploadedBy;
+            objParams[5] = UploadedDttm;
+            objParams[6] = Ent;
+            objParams[7] = Proj;
+            objParams[8] = ProjId;
+            objParams[9] = cityNm;
+            objParams[10] = facCd;
+
+            var EmpInputid = await daservice.GetDataAsync(System.Data.CommandType.Text, strQuery, objParams);
+            return EmpInputid;
+        }
+
+        public async Task<int> InsertintoEmployeeInputHistory(int EmployeeInputId)
+        {
+            DataAccess daservice = new DataAccess();
+            int result = 0;
+            string strQueryHistory = "INSERT INTO EmployeeInputHistory(EmployeeInputId,EnterpriseId,FacilityNm,DataSourceId,IsActive,UploadedBy,UploadedDttm,Entity,Project,ProjectId,City,FacilityCode)"
+                                    + " SELECT EmployeeInputId,EnterpriseId,FacilityNm,DataSourceId,IsActive,UploadedBy,GETDATE(),Entity,Project,ProjectId,City,FacilityCode FROM EmployeeInputDump "
+                                     + " WHERE EmployeeInputId =" + EmployeeInputId + "";
+
+            SqlParameter HistEnterpriseId = new SqlParameter("@EmployeeInputId", SqlDbType.VarChar) { Value = EmployeeInputId };
+
+            SqlParameter[] HistobjParams = new SqlParameter[1];
+            HistobjParams[0] = HistEnterpriseId;
+
+            result = await daservice.ExecuteNonQueryAsync(System.Data.CommandType.Text, strQueryHistory, HistobjParams);
+
+            return result;
+
+        }
+
+        public async Task<DataTable> GetDataSourceConfiguration()
+        {
+            DataAccess daservice = new DataAccess(); 
+            string Query = "SELECT isFacilityAutoUpdate,IsActive,SourceName,DataSourceID FROM DataSourceConfiguration";
+            SqlParameter[] objParams = new SqlParameter[0];
+            var lstDataSOurceConfig = await daservice.GetDataAsync(System.Data.CommandType.Text, Query, objParams);
+            return lstDataSOurceConfig;
+        }
+        public async Task<DataTable> InsertUploaddata(ErrorModel row)
+        {
+            DataAccess daservice = new DataAccess();
+            string strQuery1 = @"INSERT INTO [dbo].[Uploadfiledata] (FileNames,RecordCount,UploadedBy,UploadedDttm,UploadType)output INSERTED.FileId VALUES(@FileNames,@RecordCount,@UploadedBy,GETDATE(),@UploadType);";
+            //SqlParameter FieldId = new SqlParameter("@FieldId", SqlDbType.Int) { Value = 1 };
+            SqlParameter FileNames = new SqlParameter("@FileNames", SqlDbType.VarChar) { Value = row.Filenames };
+            SqlParameter RecordCount = new SqlParameter("@RecordCount", SqlDbType.VarChar) { Value = row.RecordsCount };
+            SqlParameter UploadedBy = new SqlParameter("@UploadedBy", SqlDbType.VarChar) { Value = row.UploadeBy };
+            //SqlParameter UploadedDttm = new SqlParameter("@UploadedDttm", SqlDbType.DateTime) { Value = row.Uploadedate };
+            SqlParameter UploadType = new SqlParameter("@UploadType", SqlDbType.VarChar) { Value = row.UploadType };
+
+
+            SqlParameter[] objParams1 = new SqlParameter[4];
+            objParams1[0] = FileNames;
+            objParams1[1] = RecordCount;
+            objParams1[2] = UploadedBy;
+            objParams1[3] = UploadType;
+
+            //objParams1[3] = UploadedDttm;
+
+            var Fileid1 = await daservice.GetDataAsync(System.Data.CommandType.Text, strQuery1, objParams1);
+            return Fileid1;
+        }
+        public async Task<int> InsertInvalidListdata(string EnterpriseId, string FacilityName, string ErrorReason, int fileid)
+        {
+            int ErrorFileid = 0;
+            DataAccess baseService = new DataAccess();
+            string strQuery1 = @"INSERT INTO [dbo].[UploadFileErrors] ([FileId],[EnterpriseId],[FacilityName],[Valid],[ErrorReason]) VALUES(@FileId,@EnterpriseId,@FacilityName,@Valid,@ErrorReason);";
+            SqlParameter FieldId = new SqlParameter("@FileId", SqlDbType.Int) { Value = fileid };
+            SqlParameter EnterprId = new SqlParameter("@EnterpriseId", SqlDbType.VarChar) { Value = EnterpriseId };
+            SqlParameter FacilityNm = new SqlParameter("@FacilityName", SqlDbType.VarChar) { Value = FacilityName };
+            SqlParameter Valid = new SqlParameter("@Valid", SqlDbType.Bit) { Value = 0 };
+            SqlParameter ErrorReas = new SqlParameter("@ErrorReason", SqlDbType.VarChar) { Value = ErrorReason };
+
+
+            SqlParameter[] objParams1 = new SqlParameter[5];
+            objParams1[0] = FieldId;
+            objParams1[1] = EnterprId;
+            objParams1[2] = FacilityNm;
+            objParams1[3] = Valid;
+            objParams1[4] = ErrorReas;
+
+            ErrorFileid = Convert.ToInt32(await baseService.ExecuteNonQueryAsync(System.Data.CommandType.Text, strQuery1, objParams1));
+            return ErrorFileid;
+        }
+        public async Task<DataTable> GetErrorDetails(string UploadedBy)
+        {
+            DataAccess baservice = new DataAccess();
+            string Query = "SELECT FileId, FileNames, ErrorFileName, UploadedDttm, UploadedBy,Status,UploadType " +
+                   "FROM UploadFileData UF WHERE UploadedBy = '" + UploadedBy + "'";
+
+            SqlParameter[] objParams = new SqlParameter[0];
+            var lstFinaleerrordetails = await baservice.GetDataAsync(System.Data.CommandType.Text, Query, objParams);
+            return lstFinaleerrordetails;
+        }
+        public async Task<int> UpdateUploadFileStatus(int fileID, string fileStatus)
+        {
+            DataAccess daservice = new DataAccess();
+            string strQ = "UPDATE UploadFileData SET Status = @filestatus WHERE FileId = @fileId";
+            SqlParameter fileIdUpdate = new SqlParameter("@fileId", SqlDbType.VarChar) { Value = fileID };
+            SqlParameter fileNameUpdated = new SqlParameter("@filestatus", SqlDbType.VarChar) { Value = fileStatus };
+            SqlParameter[] objPrm = new SqlParameter[2];
+            objPrm[0] = fileIdUpdate;
+            objPrm[1] = fileNameUpdated;
+            int iResult = await daservice.ExecuteNonQueryAsync(System.Data.CommandType.Text, strQ, objPrm);
+
+            return iResult;
+        }
+
+        public async Task<DataTable> GetEmployeeFacilityMaster()
+        {
+            DataAccess daservice = new DataAccess();
+            string Query = "SELECT AbacusProjectId,city,FacilityNm,FacilityCd,EnterpriseId,EmployeeFacilityMasterId" +
+                 " FROM EmployeeFacilityMaster where ACPStatus='" + Constant.Unresolved + "'and CAST(updatedDttm as date) = CAST(getdate() as date)" +
+                 "and Entity = '" + Constant.Atci + "'; ";
+            SqlParameter[] objParams = new SqlParameter[0];
+            var lstEmployeeFacilities = await daservice.GetDataAsync(System.Data.CommandType.Text, Query, objParams);
+            return lstEmployeeFacilities;
+        }
+
+
+        public async Task<DataTable> GetProjectFacilityMaster()
+        {
+            DataAccess daservice = new DataAccess();
+            string Query = "SELECT AbacusProjectId,city,FacilityNm,FacilityCd,IsQualified,ProjectNm,IsSEZ,Entity,IsDefault  FROM ProjectFacilityMaster where IsActive = 1 " +
+                "and Entity ='" + Constant.Atci + "';";
+
+            SqlParameter[] objParams = new SqlParameter[0];
+            var lstQuaifiedFacilities = await daservice.GetDataAsync(System.Data.CommandType.Text, Query, objParams);
+            return lstQuaifiedFacilities;
+        }
+        public async Task<int> UpdateEMPFacilityMasterDataForResolved(string FacilityNm,string FacilityCd,int EmployeeFacilityMasterId,string PreviousFacility, int IsSiteChanged)
+        {
+            
+            DataAccess baservice = new DataAccess();
+            string strQuery = @"UPDATE EmployeeFacilityMaster SET ACPStatus ='" + Constant.Resolved + "',FacilityNm=@FacilityNm," +
+                "FacilityCd=@FacilityCd,IsSiteChanged = '" + IsSiteChanged + "' ,updatedDttm = GETDATE(),updatedBy='"+Constant.system+"'" +
+                " WHERE EmployeeFacilityMasterId=@EmployeeFacilityMasterId";
+
+            SqlParameter facilityName = new SqlParameter("@FacilityNm", SqlDbType.VarChar) { Value = FacilityNm };
+            SqlParameter facilityCode = new SqlParameter("@FacilityCd", SqlDbType.VarChar) { Value = FacilityCd };
+            SqlParameter Previousfacility= new SqlParameter("@PreviousFacility", SqlDbType.VarChar) { Value = PreviousFacility };
+            SqlParameter employeeFacilityMasterId = new SqlParameter("@EmployeeFacilityMasterId", SqlDbType.Int) { Value = EmployeeFacilityMasterId };
+            SqlParameter[] objPrm = new SqlParameter[4];
+            objPrm[0] = facilityName;
+            objPrm[1] = facilityCode;
+            objPrm[2] = employeeFacilityMasterId;
+            objPrm[3] = Previousfacility;
+
+            int iResult = await baservice.ExecuteNonQueryAsync(System.Data.CommandType.Text, strQuery, objPrm);
+
+            return iResult;
+        }
+
+        public async Task<int> UpdateEMPFacilityMasterDataUnResolved(int EmployeeFacilityMasterId)
+        {
+            DataAccess baservice = new DataAccess();
+            string strQuery = @"UPDATE EmployeeFacilityMaster SET ACPStatus ='" + Constant.Unresolved + "',updatedDttm = GETDATE(),updatedBy='" + Constant.system + "' WHERE  EmployeeFacilityMasterId=@EmployeeFacilityMasterId ";
+
+            SqlParameter employeeFacilityMasterId = new SqlParameter("@EmployeeFacilityMasterId", SqlDbType.Int) { Value = EmployeeFacilityMasterId };
+            SqlParameter[] objPrm = new SqlParameter[1];
+            objPrm[0] = employeeFacilityMasterId;
+
+            int iResult = await baservice.ExecuteNonQueryAsync(System.Data.CommandType.Text, strQuery, objPrm);
+
+            return iResult;
+        }
+
+        public async Task<List<FacilityLeadApprovalModel>> getFacilityLeadApprovalDetails()
+        {
+            List<FacilityLeadApprovalModel> objList = new List<FacilityLeadApprovalModel>();
+            string apiUrl = string.Format(Environment.GetEnvironmentVariable("GetALLFacilityListFromInventory"));
+
+            Uri myUri = new Uri(apiUrl, UriKind.Absolute);
+            using (var client = new WebClient())
+            {
+                //token Insert
+                JwtToken.InjectJwtToken(client);
+                var response = await client.DownloadStringTaskAsync(myUri);
+                if (!string.IsNullOrEmpty(response))
+                {
+                    objList = JsonConvert.DeserializeObject<List<FacilityLeadApprovalModel>>(response);
+                }
+            }
+            return objList;
+        }
+
+        public async Task<DataTable> InsertIntoProjectDump(string entity, int ProjectId, string project ,string poc, string sdl, string uploadby, int datasourceid)
+        {
+            DataAccess daservice = new DataAccess();
+            string strQuery =
+                       "Declare @UserId INT; INSERT INTO ProjectInputDump(DataSourceId,Entity,ProjectID,ProjectNm,ProjectPOC,ProjectSDL,IsActive,UploadedBy,UploadedDttm) " +
+                       "values(@DataSourceId,@Entity,@ProjectID,@ProjectNm,@ProjectPOC,@ProjectSDL,@IsActive,@UploadedBy,@UploadedDttm);" +
+                       "SET @UserId = SCOPE_IDENTITY(); Select @UserId AS ProjectInputId";
+            SqlParameter DataSourceId = new SqlParameter("@DataSourceId", SqlDbType.Int) { Value = datasourceid };
+            SqlParameter Entity = new SqlParameter("@Entity", SqlDbType.VarChar) { Value = entity };
+            SqlParameter ProjId = new SqlParameter("@ProjectID", SqlDbType.Int) { Value = ProjectId };
+            SqlParameter Proj = new SqlParameter("@ProjectNm", SqlDbType.VarChar) { Value = project };
+            SqlParameter Poc = new SqlParameter("@ProjectPOC", SqlDbType.VarChar) { Value = poc };
+            SqlParameter Sdl = new SqlParameter("@ProjectSDL", SqlDbType.VarChar) { Value = sdl };
+            SqlParameter IsActive = new SqlParameter("@IsActive", SqlDbType.Bit) { Value = 1 };
+            SqlParameter UploadedBy = new SqlParameter("@UploadedBy", SqlDbType.VarChar) { Value = uploadby };
+            SqlParameter UploadedDttm = new SqlParameter("@UploadedDttm", SqlDbType.DateTime) { Value = DateTime.Now };
+
+
+            SqlParameter[] objParams = new SqlParameter[9];
+            objParams[0] = DataSourceId;
+            objParams[1] = Entity;
+            objParams[2] = ProjId;
+            objParams[3] = Proj;
+            objParams[4] = Poc;
+            objParams[5] = Sdl;
+            objParams[6] = IsActive;
+            objParams[7] = UploadedBy;
+            objParams[8] = UploadedDttm;
+
+            var ProjInputid = await daservice.GetDataAsync(System.Data.CommandType.Text, strQuery, objParams);
+            return ProjInputid;
+        }
+        public async Task<int> InsertintoProjectInputHistory(int ProjectInputId)
+        {
+            DataAccess daservice = new DataAccess();
+            int result = 0;
+            string strQueryHistory = "INSERT INTO ProjectInputHistory(ProjectInputId,DataSourceId,IsActive,UploadedBy,UploadedDttm,Entity,ProjectNm,ProjectID,ProjectPOC,ProjectSDL)"
+                                    + " SELECT ProjectInputId,DataSourceId,IsActive,UploadedBy,cast(SWITCHOFFSET(SYSDATETIMEOFFSET(),'+05:30')as datetime),Entity,ProjectNm,ProjectId,ProjectPOC,ProjectSDL FROM ProjectInputDump "
+                                     + " WHERE ProjectInputId =" + ProjectInputId + "";
+
+            SqlParameter HistProjectId = new SqlParameter("@ProjectInputId", SqlDbType.VarChar) { Value = ProjectInputId };
+
+            SqlParameter[] HistobjParams = new SqlParameter[1];
+            HistobjParams[0] = HistProjectId;
+
+            result = await daservice.ExecuteNonQueryAsync(System.Data.CommandType.Text, strQueryHistory, HistobjParams);
+
+            return result;
+
+        }
+        public async Task<int> InsertInvalidProjectData(string Entity, int ProjectId, string project, string poc, string sdl, string error, int fieldid)
+        {
+            int ErrorFileid = 0;
+            DataAccess baseService = new DataAccess();
+            string strQuery1 = @"INSERT INTO [dbo].[ProjectFileErrors] ([FileId],[Entity],[ProjectId],[Project],[ProjectPOC],[ProjectSDL],[ErrorReason],[UpdatedDtm]) VALUES(@FileId,@Entity,@ProjectId,@Project,@ProjectPOC,@ProjectSDL,@ErrorReason,@UpdatedDtm);";
+            SqlParameter FieldId = new SqlParameter("@FileId", SqlDbType.Int) { Value = fieldid };
+            SqlParameter Ent = new SqlParameter("@Entity", SqlDbType.VarChar) { Value = Entity };
+            SqlParameter ProjId = new SqlParameter("@ProjectId", SqlDbType.Int) { Value = ProjectId };
+            SqlParameter Projpoc = new SqlParameter("@ProjectPOC", SqlDbType.VarChar) { Value = poc };
+            SqlParameter Projsdl = new SqlParameter("@ProjectSDL", SqlDbType.VarChar) { Value = sdl };
+            SqlParameter ErrorReas = new SqlParameter("@ErrorReason", SqlDbType.VarChar) { Value = error };
+            SqlParameter Uptdtm = new SqlParameter("@UpdatedDtm", SqlDbType.DateTime) { Value = DateTime.Now };
+            SqlParameter Proj = new SqlParameter("@Project", SqlDbType.VarChar) { Value = project };
+
+
+            SqlParameter[] objParams1 = new SqlParameter[8];
+            objParams1[0] = FieldId;
+            objParams1[1] = Ent;
+            objParams1[2] = ProjId;
+            objParams1[3] = Projpoc;
+            objParams1[4] = Projsdl;
+            objParams1[5] = ErrorReas;
+            objParams1[6] = Uptdtm;
+            objParams1[7] = Proj;
+
+            ErrorFileid = await daservice.ExecuteNonQueryAsync(System.Data.CommandType.Text, strQuery1, objParams1);
+            return ErrorFileid;
+        }
+        public async Task<int> GetProjectDetailsId(int projId)
+        {
+            int objList = 0;
+            try
+            {
+                string apiUrl = string.Format(Environment.GetEnvironmentVariable("GetProjectDetailIds") + "?ACPProjectID={0}", projId);
+
+                Uri myUri = new Uri(apiUrl, UriKind.Absolute);
+                using (var client = new WebClient())
+                {
+                    //token Insert
+                    JwtToken.InjectJwtToken(client);
+                    var response = await client.DownloadStringTaskAsync(myUri);
+                    if (!string.IsNullOrEmpty(response))
+                    {
+                        objList = Convert.ToInt32(JsonConvert.DeserializeObject(response));
+                    }
+                }
+            }
+
+            catch (Exception ex)
+            {
+                throw ex;
+            }
+
+            return objList;
+        }
+        public async Task<int> CreateGroupMasterData(int projectDetailsId, int locId, string grpNm)
+        {
+            int result = 0;
+            try
+            {
+                GroupMasterModel grpmodel = new GroupMasterModel()
+                {
+                    GroupNm = grpNm,
+                    OrgId = projectDetailsId,
+                    OrgFlag = "PR",
+                    IsActive = 1,
+                    CreatedBy = "System",
+                    CreateDttm = DateTime.Now,
+                    UpdatedBy = "System",
+                    UpdatedDttm = DateTime.Now,
+                    LocationId = locId
+                };
+                string apiurl = AccountServiceUrl + "CreateGroupMaster";
+
+                using (var client = new WebClient())
+                {
+                    //token Insert
+                    JwtToken.InjectJwtToken(client);
+                    string data = JsonConvert.SerializeObject(grpmodel);
+                    client.Encoding = Encoding.UTF8;
+                    var response = client.UploadString(apiurl, "POST", data);
+                    if (!string.IsNullOrEmpty(response))
+                    {
+                        grpmodel = JsonConvert.DeserializeObject<GroupMasterModel>(response);
+                        result = grpmodel.GroupId;
+                    }
+                }
+            }
+
+            catch (Exception ex)
+            {
+                log.LogInformation("Error In : CreateGroupMasterData " + ex.ToString());
+                throw ex;
+            }
+
+            return result;
+        }
+        public async Task<int> GetResourceId(string enterpriseId)
+        {
+            int objList = 0;
+            try
+            {
+                string apiUrl = string.Format(AccountServiceUrl+ "GetResourceId" + "?enterpriseId={0}", enterpriseId);
+
+                Uri myUri = new Uri(apiUrl, UriKind.Absolute);
+                using (var client = new WebClient())
+                {
+                    //token Insert
+                    JwtToken.InjectJwtToken(client);
+                    var response = await client.DownloadStringTaskAsync(myUri);
+                    if (!string.IsNullOrEmpty(response))
+                    {
+                        objList = Convert.ToInt32(JsonConvert.DeserializeObject(response));
+                    }
+                }
+            }
+
+            catch (Exception ex)
+            {
+                log.LogInformation("Error In : GetResourceId " + ex.ToString());
+                throw ex;
+            }
+
+            return objList;
+        }
+        public async Task<int> CreateUsers(long resourceId)
+        {
+            int objList = 0;
+            try
+            {
+                string apiurl = AccountServiceUrl + "UpdateInsertUsers";
+
+                UsersModel usersModels = new UsersModel()
+                {
+                    ResourceId = resourceId,
+                    IsActive = 1,
+                    CreatedBy = "System",
+                    CreateDttm = DateTime.Now,
+                    UpdatedBy = "System",
+                    UpdatedDttm = DateTime.Now,
+                    LastExecution = string.Empty
+                };
+
+                using (var client = new WebClient())
+                {
+                    //token Insert
+                    JwtToken.InjectJwtToken(client);
+                    string data = JsonConvert.SerializeObject(usersModels);
+                    client.Encoding = Encoding.UTF8;
+                    var response = client.UploadString(apiurl, "POST", data);
+                    if (!string.IsNullOrEmpty(response))
+                    {
+                        objList = Convert.ToInt32(JsonConvert.DeserializeObject(response));
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                log.LogInformation("Error In : CreateUsers " + ex.ToString());
+                throw ex;
+            }
+            return objList;
+        }
+        public async Task<string> CreateUserGroupMapping(int userid, int groupid)
+        {
+            var jObject = string.Empty;
+            try
+            {
+                UserGroupMappingModel usergrpmodel = new UserGroupMappingModel()
+                {
+                    UserId = userid,
+                    GroupId = groupid,
+                    IsActive = 1,
+                    CreatedBy = "System",
+                    CreateDttm = DateTime.Now,
+                    UpdatedBy = "System",
+                    UpdatedDttm = DateTime.Now
+                };
+
+                string apiurl = AccountServiceUrl + "CreateUserGroupMapping";
+
+                using (var client = new WebClient())
+                {
+                    //token Insert
+                    JwtToken.InjectJwtToken(client);
+                    string data = JsonConvert.SerializeObject(usergrpmodel);
+                    client.Encoding = Encoding.UTF8;
+                    var response = client.UploadString(apiurl, "POST", data);
+                    if (!string.IsNullOrEmpty(response))
+                    {
+                        jObject = JsonConvert.DeserializeObject(response).ToString();
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                log.LogInformation("Error In : CreateUserGroupMapping " + ex.ToString());
+                throw ex;
+            }
+            return jObject;
+        }
+        public async Task<List<ProjectIdModel>> GetProjectDetailsIdByEntity(int projId, string entity)
+        {
+            List<ProjectIdModel> objProject = new List<ProjectIdModel>();
+            try
+            {
+                string apiUrl = string.Format(ProjectServiceUrl + "GetProjectDetailByEntityId" + "?ProjectId={0}&Entity={1}", projId, entity); // env variable of URL
+
+                Uri myUri = new Uri(apiUrl, UriKind.Absolute);
+                using (var client = new WebClient())
+                {
+                    //token Insert
+                    JwtToken.InjectJwtToken(client);
+                    var response = await client.DownloadStringTaskAsync(myUri);
+                    if (!string.IsNullOrEmpty(response))
+                    {
+                        objProject = JsonConvert.DeserializeObject<List<ProjectIdModel>>(response);
+                    }
+                }
+            }
+
+            catch (Exception ex)
+            {
+                log.LogInformation("Error In : GetProjectDetailsIdByEntity " + ex.ToString());
+                throw ex;
+            }
+
+            return objProject;
+        }
+        public async Task<List<AcpProjectIdModel>> GetAcpProjectIds(ILogger log)
+        {
+            List<AcpProjectIdModel> result = new List<AcpProjectIdModel>();
+            try
+            {
+                var auth = new Oauth2();
+                var clientId = Convert.ToString(Environment.GetEnvironmentVariable("clientId"));
+                var clientSecret = Convert.ToString(Environment.GetEnvironmentVariable("DataClientSecret"));
+                var scope = Convert.ToString(Environment.GetEnvironmentVariable("Datascope"));
+                string apiUrl = string.Format(Environment.GetEnvironmentVariable("WebApiBaseUrl") + FnGetAcpProjectIds);
+                var authUrl = Convert.ToString(Environment.GetEnvironmentVariable("OAuthServiceUrl"));
+                var responseBody = auth.GenerateOauth2TokenAggregateData(authUrl, clientId, clientSecret, scope).Result;
+                var oauthToken = responseBody.access_token;
+
+                using (var client = new HttpClient())
+                {
+                    client.BaseAddress = new Uri(apiUrl);
+                    client.DefaultRequestHeaders.Accept.Clear();
+                    client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("*/*"));
+                    client.DefaultRequestHeaders.Add("Authorization", "bearer " + oauthToken);
+
+                    var response = await client.GetAsync(apiUrl).ConfigureAwait(false);
+
+                    var responseWs = new WebServiceResponse
+                    {
+                        StatusCode = response.StatusCode,
+                        ResponseMessage = response.RequestMessage,
+                        Body = await response.Content.ReadAsStringAsync().ConfigureAwait(false)
+                    };
+                    result = JsonConvert.DeserializeObject<List<AcpProjectIdModel>>(responseWs.Body);
+                }
+
+            }
+            catch (Exception ex)
+            {
+
+            }
+            return result;
+        }
+        public async Task<int> UpdateEmployee(string FacilityNm, string FacilityCd, int projectId, string City, string Entity)
+        {
+      
+            DataAccess baservice = new DataAccess();
+            string strQuery = @"UPDATE EmployeeFacilityMaster 
+                            SET FacilityNm = @FacilityNm,FacilityCd = @FacilityCd,Acpstatus = '" + Constant.Resolved + "'"
+                           +" WHERE AbacusProjectId = '" + projectId + "' and City = '" + City + "' and Entity ='" + Entity + "' and Acpstatus ='"+Constant.Unresolved+"'";
+            SqlParameter facilityName = new SqlParameter("@FacilityNm", SqlDbType.VarChar) { Value = FacilityNm };
+            SqlParameter facilityCode = new SqlParameter("@FacilityCd", SqlDbType.VarChar) { Value = FacilityCd };
+
+            SqlParameter[] objPrm = new SqlParameter[2];
+            objPrm[0] = facilityName;
+            objPrm[1] = facilityCode;
+
+
+            int iResult = await baservice.ExecuteNonQueryAsync(System.Data.CommandType.Text, strQuery, objPrm);
+
+            return iResult;
+        }
+        public async Task<DataTable> GetDcsoProjectIdMaster(string projectCd, string entity)
+        {
+            DataAccess daservice = new DataAccess();
+            string Query = "SELECT distinct AbacusProjectId, ProjectNm FROM ProjectFacilityMaster where ProjectNm='" + projectCd + "'and Entity='"+entity+"';"; // entity also
+
+            SqlParameter[] objParams = new SqlParameter[0];
+            var DcsoProjectId = await daservice.GetDataAsync(System.Data.CommandType.Text, Query, objParams);
+            return DcsoProjectId;
+        }
+        public async Task<int> GetLocationIdFromInventory(string facilityNm)
+        {
+            int locationId = 0;
+            LocationMdl lm = new LocationMdl();
+            try
+            {
+                string apiUrl = string.Format(InventoryServiceUrl + "GetLocationName" + "?FacilityNm={0}", facilityNm); // Inventory URL
+                Uri myUri = new Uri(apiUrl, UriKind.Absolute);
+                using (var client = new WebClient())
+                {
+                    //token Insert
+                    JwtToken.InjectJwtToken(client);
+                    var response = await client.DownloadStringTaskAsync(myUri);
+                    if (!string.IsNullOrEmpty(response))
+                    {
+                        lm = JsonConvert.DeserializeObject<LocationMdl>(response);
+                        locationId = lm.LocationId;
+                    }
+                }
+            }
+
+            catch (Exception ex)
+            {
+                throw ex;
+            }
+
+            return locationId;
+        }
+
+        public async Task<DataTable> GetEmployeeFacilityForBizOPsMail()
+        {
+            DataAccess daservice = new DataAccess();
+            string Query = "select distinct EmpAbacusProjectID,ProjectNm,Empcity,EmpFacilityNm from VW_ForEmployeeAndFacilityTable " +
+                " where IsQualified = '" + Constant.IsQualifiedBizOPs + "' and ACPStatus='" + Constant.PendingApproval + "' and CAST(updatedDttm as date) = CAST(getdate() as date)" +
+                " and EmpEntity = '" + Constant.Atci + "'; ";
+            SqlParameter[] objParams = new SqlParameter[0];
+            var lstEmployeeFacilities = await daservice.GetDataAsync(System.Data.CommandType.Text, Query, objParams);
+            return lstEmployeeFacilities;
+        }
+        public async Task<DataTable> GetEmployeeFacilityMasterForAioc(int abacusProjectId)
+        {
+            DataAccess daservice = new DataAccess();
+            string Query = "SELECT ServiceNowMasterID,AbacusProjectId ,city,FacilityNm,FacilityCd,PreviousFacility,PreviousFacilityCd,EmployeeFacilityMasterId,EnterpriseId" +
+                " FROM EmployeeFacilityMaster where ACPStatus='" + Constant.Unresolved + "'and CAST(updatedDttm as date) = CAST(getdate() as date)" +
+                " and AbacusProjectId = " + abacusProjectId +
+                " and Entity = '" + Constant.AIOC + "'; ";
+            SqlParameter[] objParams = new SqlParameter[0];
+            var lstEmployeeFacilities = await daservice.GetDataAsync(System.Data.CommandType.Text, Query, objParams);
+            return lstEmployeeFacilities;
+        }
+        public async Task<DataTable> GetProjectFacilityMasterForAioc(int abacusProjectId)
+        {
+            DataAccess daservice = new DataAccess();
+            string Query = "SELECT AbacusProjectId ,city,FacilityNm,FacilityCd,IsQualified,ProjectNm,Entity,IsDefault" +
+                           " FROM ProjectFacilityMaster" +
+                           " where IsActive = 1" +
+                           " and AbacusProjectId = " + abacusProjectId +
+                           " and Entity = '" + Constant.AIOC + "';";
+
+            SqlParameter[] objParams = new SqlParameter[0];
+            var lstQuaifiedFacilities = await daservice.GetDataAsync(System.Data.CommandType.Text, Query, objParams);
+            return lstQuaifiedFacilities;
+        }
+        public async Task<int> GetGroupdId(int orgId, int locId, string grpNm)
+        {
+            int result = 0;
+            try
+            {
+                string apiurl = string.Format(AccountServiceUrl+"GetGroupId" + "?OrgId={0}&LocationId={1}&GroupNm={2}", orgId,locId,grpNm);
+
+                Uri myUri = new Uri(apiurl, UriKind.Absolute);
+                using (var client = new WebClient())
+                {
+                    //token Insert
+                    JwtToken.InjectJwtToken(client);
+                    var response = await client.DownloadStringTaskAsync(myUri);
+                    if (!string.IsNullOrEmpty(response))
+                    {
+                        result = Convert.ToInt32(JsonConvert.DeserializeObject(response));
+                    }
+                }
+            }
+
+            catch (Exception ex)
+            {
+                log.LogInformation("Error In : GetGroupdId " + ex.ToString());
+                throw ex;
+            }
+
+            return result;
+        }
+        public async Task<int> GetMappingId(int grpId, int userId)
+        {
+            int result = 0;
+            try
+            {
+                string apiurl = string.Format(AccountServiceUrl + "GetGroupMappingData" + "?GroupId={0}&UserId={1}", grpId, userId);
+
+                Uri myUri = new Uri(apiurl, UriKind.Absolute);
+                using (var client = new WebClient())
+                {
+                    //token Insert
+                    JwtToken.InjectJwtToken(client);
+                    var response = await client.DownloadStringTaskAsync(myUri);
+                    if (!string.IsNullOrEmpty(response))
+                    {
+                        result = Convert.ToInt32(JsonConvert.DeserializeObject(response));
+                    }
+                }
+            }
+
+            catch (Exception ex)
+            {
+                log.LogInformation("Error In : GetMappingId " + ex.ToString());
+                throw ex;
+            }
+            return result;
+        }
+        public async Task<string> GetCitynameFromMaster(int locId)
+        {
+            string cityName = string.Empty;
+            List<MasterLocationModel> lmodel = new List<MasterLocationModel>();
+            string MasterServiceUrl = string.Format(Environment.GetEnvironmentVariable("MasterServiceUrl"));
+            try
+            {
+                string apiUrl = string.Format(MasterServiceUrl + "GetProjectlocation" + "?LocationId={0}", locId); // Master URL req
+                Uri myUri = new Uri(apiUrl, UriKind.Absolute);
+                using (var client = new WebClient())
+                {
+                    //token Insert
+                    JwtToken.InjectJwtToken(client);
+                    var response = await client.DownloadStringTaskAsync(myUri);
+                    if (!string.IsNullOrEmpty(response))
+                    {
+                        lmodel = JsonConvert.DeserializeObject<List<MasterLocationModel>>(response);
+                        cityName = lmodel[0].LocationNm;
+                    }
+                }
+            }
+
+            catch (Exception ex)
+            {
+                throw ex;
+            }
+
+            return cityName;
+        }
+        public async Task<DataTable> GetFacilityCode(string facilityNm)
+        {
+            DataAccess daservice = new DataAccess();
+            string Query = "select top 1 facilitycd from projectfacilitymaster where facilitynm ='"+facilityNm+"'"; 
+
+            SqlParameter[] objParams = new SqlParameter[0];
+            var DcsoProjectId = await daservice.GetDataAsync(System.Data.CommandType.Text, Query, objParams);
+            return DcsoProjectId;
+        }  
+        public async Task<DataTable> GetProjectFacilityMaster(int abacusProjectId)
+        {
+            DataAccess daservice = new DataAccess();
+            string Query = "SELECT AbacusProjectId,city,FacilityNm,FacilityCd,IsQualified,ProjectNm,IsSEZ,Entity,IsDefault  FROM ProjectFacilityMaster where IsActive = 1 " +
+                " and abacusProjectId =" + abacusProjectId + " and   Entity ='" + Constant.Atci + "';";
+
+            SqlParameter[] objParams = new SqlParameter[0];
+            var lstQuaifiedFacilities = await daservice.GetDataAsync(System.Data.CommandType.Text, Query, objParams);
+            return lstQuaifiedFacilities;
+        }
+        public async Task<DataTable> GetEmployeeFacilityMasterProjectIds()
+        {
+            DataAccess daservice = new DataAccess();
+            string Query = "SELECT distinct AbacusProjectId" +
+                 " FROM EmployeeFacilityMaster where ACPStatus='" + Constant.Unresolved + "' and CAST(updatedDttm as date) = CAST(getdate() as date)" +
+                 " and Entity = '" + Constant.Atci + "'; ";
+            SqlParameter[] objParams = new SqlParameter[0];
+            var lstEmployeeFacilities = await daservice.GetDataAsync(System.Data.CommandType.Text, Query, objParams);
+            return lstEmployeeFacilities;
+        }
+
+        public async Task<DataTable> GetEmployeeFacilityMasterProjectIdsAioc()
+        {
+            DataAccess daservice = new DataAccess();
+            string Query = "SELECT distinct AbacusProjectId" +
+                 " FROM EmployeeFacilityMaster where ACPStatus='" + Constant.Unresolved + "' and CAST(updatedDttm as date) = CAST(getdate() as date)" +
+                 " and Entity = '" + Constant.AIOC + "'; ";
+            SqlParameter[] objParams = new SqlParameter[0];
+            var lstEmployeeFacilities = await daservice.GetDataAsync(System.Data.CommandType.Text, Query, objParams);
+            return lstEmployeeFacilities;
+        }
+        public async Task<DataTable> GetEmployeeFacilityMaster(int abacusProjectId)
+        {
+            DataAccess daservice = new DataAccess();
+            string Query = "SELECT AbacusProjectId,city,FacilityNm,FacilityCd,EnterpriseId,PreviousFacility,PreviousFacilityCd,EmployeeFacilityMasterId,ServiceNowMasterID,IsIUTSent,IsSEZSent,RESOURCESTATUS,Entity,TentativeDOJ" +
+                 " FROM EmployeeFacilityMaster where abacusProjectId =" + abacusProjectId + " and  ACPStatus='" + Constant.Unresolved + "' and CAST(updatedDttm as date) = CAST(getdate() as date)" +
+                 " and Entity = '" + Constant.Atci + "'; ";
+            SqlParameter[] objParams = new SqlParameter[0];
+            var lstEmployeeFacilities = await daservice.GetDataAsync(System.Data.CommandType.Text, Query, objParams);
+            return lstEmployeeFacilities;
+        }
+
+        public async Task<DataTable> GetServiceNowDetailsIsNew(int ServiceNowMasterID)
+        {
+            DataAccess daservice = new DataAccess();
+            string Query = "SELECT IsNewJoiner FROM ServiceNowDetails where ServiceNowMasterID =" + ServiceNowMasterID + " ";
+            SqlParameter[] objParams = new SqlParameter[0];
+            var isNewJoiner = await daservice.GetDataAsync(System.Data.CommandType.Text, Query, objParams);
+            return isNewJoiner;
+
+        }
+
+        public async Task<int> InsertEmployeeDataHistory(int EmpFacMasterId, string ActType, string ActionBy, string comment)
+        {
+            try
+            {
+                DataAccess daservice = new DataAccess();
+                string query = "Insert into EmployeeFacilityHistory(EmployeeFacilityMasterId ,  EnterpriseId ,  FacilityNm ,  ACPStatus ,  ACPErrorReason ,  AbacusStatus ,  AbacusErrorReason ,  UploadedBy ,  UploadedDttm ,  Entity ,  Project ,  IsProcessed ,  AbacusProjectID ,  facilityCd ,  city ,  updatedBy ,  updatedDttm ,  PreviousFacility ,  RejectReason ,  IsSiteChanged ,  PreviousFacilityCd ,  PreviousFacilityIsSEZ ,  NewFacilityIsSEZ ,  ActionType, ActionBy, ActionDate, Comments, RESOURCESTATUS,TentativeDOJ,ActualDOJ)" +
+                      " SELECT  EmployeeFacilityMasterId ,  EnterpriseId ,  FacilityNm ,  ACPStatus ,  ACPErrorReason ,  AbacusStatus ,  AbacusErrorReason ,  UploadedBy ,  UploadedDttm ,  Entity ,  Project ,  IsProcessed ,  AbacusProjectID ,  facilityCd ,  city ,  updatedBy ,  updatedDttm ,  PreviousFacility ,   RejectReason ,  IsSiteChanged ,  PreviousFacilityCd ,  PreviousFacilityIsSEZ ,  NewFacilityIsSEZ , '" + ActType + "', '" + ActionBy + "' , GETDATE(),'" + comment + "' , RESOURCESTATUS,TentativeDOJ,ActualDOJ FROM EmployeeFacilityMaster WHERE EmployeeFacilityMasterId = @EmployeeFacilityMasterId ";
+
+                SqlParameter EmployeeFacilityMasterId = new SqlParameter("@EmployeeFacilityMasterId", SqlDbType.Int) { Value = EmpFacMasterId };
+
+                SqlParameter[] objPrm = new SqlParameter[1];
+                objPrm[0] = EmployeeFacilityMasterId;
+                int iResult = await daservice.ExecuteNonQueryAsync(System.Data.CommandType.Text, query, objPrm);
+                return iResult;
+            }
+            catch (Exception ex)
+            {
+                log.LogInformation("InsertEmployeeDataHistory" + ex.ToString());
+                throw ex;
+            }
+
+        }
+        public async Task<int> InsertEmployeeDataHistoryByEnterPriseId(string Enterpriseid, string ActType, string ActionBy, string comment)
+        {            
+            try
+            {
+                DataAccess daservice = new DataAccess();
+                string query = "Insert into EmployeeFacilityHistory(EmployeeFacilityMasterId ,  EnterpriseId ,  FacilityNm ,  ACPStatus ,  ACPErrorReason ,  AbacusStatus ,  AbacusErrorReason ,  UploadedBy ,  UploadedDttm ,  Entity ,  Project ,  IsProcessed ,  AbacusProjectID ,  facilityCd ,  city ,  updatedBy ,  updatedDttm ,  PreviousFacility ,   RejectReason ,  IsSiteChanged ,  PreviousFacilityCd ,  PreviousFacilityIsSEZ ,  NewFacilityIsSEZ ,  ActionType, ActionBy, ActionDate, Comments,RESOURCESTATUS,TentativeDOJ,ActualDOJ)" +
+                      " SELECT  EmployeeFacilityMasterId ,  EnterpriseId ,  FacilityNm ,  ACPStatus ,  ACPErrorReason ,  AbacusStatus ,  AbacusErrorReason ,  UploadedBy ,  UploadedDttm ,  Entity ,  Project ,  IsProcessed ,  AbacusProjectID ,  facilityCd ,  city ,  updatedBy ,  updatedDttm ,  PreviousFacility ,    RejectReason ,  IsSiteChanged ,  PreviousFacilityCd ,  PreviousFacilityIsSEZ ,  NewFacilityIsSEZ , '" + ActType + "', '" + ActionBy + "' , GETDATE(),'" + comment + "' , RESOURCESTATUS,TentativeDOJ,ActualDOJ FROM EmployeeFacilityMaster WHERE EnterpriseId = @EnterpriseId ";
+
+                SqlParameter EnterpriseId = new SqlParameter("@EnterpriseId", SqlDbType.VarChar) { Value = Enterpriseid };
+
+                SqlParameter[] objPrm = new SqlParameter[1];
+                objPrm[0] = EnterpriseId;
+                int iResult = await daservice.ExecuteNonQueryAsync(System.Data.CommandType.Text, query, objPrm);
+                return iResult;
+            }
+            catch (Exception ex)
+            {
+                log.LogInformation("InsertEmployeeDataHistoryByEnterPriseId" + ex.ToString());
+                throw ex;
+            }
+        }
+
+        public async Task<int> InsertServiceNowMasterByEnterpriseId(EmployeeFacilityMaster employeeFacilityMaster, string correlationId, string city)
+        {
+            try
+            {
+                DataAccess daservice = new DataAccess();
+                string query = "Insert into ServiceNowMaster(CorrelationID ,  RITMNumber ,  RequestStatus ,  RequesterEnterpriseID ,  SecondaryPOCs ,  RecordNumber ,  City ,  Facility ,  ErrorMessage ,  IsActive ,  CreatedBy ,  CreatedDttm ,  UpdatedBy ,  UpdatedDttm ,  SEZRequestStatus ,  SEZErrorMessage ) VALUES" +
+                      " (@CorrelationId,null,null,@Enterpriseid,null,null,@City,@Facility,null,0,@CreatedBy,@CreatedDttm,@CreatedBy,@CreatedDttm,null,null)"+
+                     "SELECT @@IDENTITY AS 'Identity' ";
+
+                SqlParameter EnterpriseId = new SqlParameter("@EnterpriseId", SqlDbType.VarChar) { Value = employeeFacilityMaster.EnterpriseId };
+                SqlParameter CorrelationId = new SqlParameter("@CorrelationId", SqlDbType.VarChar) { Value = correlationId };
+                SqlParameter City = new SqlParameter("@City", SqlDbType.VarChar) { Value = city };
+                SqlParameter Facility = new SqlParameter("@Facility", SqlDbType.VarChar) { Value = employeeFacilityMaster.FacilityNm };
+                SqlParameter CreatedBy = new SqlParameter("@CreatedBy", SqlDbType.VarChar) { Value = employeeFacilityMaster.UpdatedBy };
+                SqlParameter CreatedDttm = new SqlParameter("@CreatedDttm", SqlDbType.DateTime) { Value = DateTime.Now };
+                SqlParameter[] objPrm = new SqlParameter[6];
+                objPrm[0] = EnterpriseId;
+                objPrm[1] = CorrelationId;
+                objPrm[2] = City;
+                objPrm[3] = Facility;
+                objPrm[4] = CreatedDttm;
+                objPrm[5] = CreatedBy;
+
+                var iResult = Convert.ToInt32(await daservice.ExecuteScalarAsync(System.Data.CommandType.Text, query, true, objPrm));
+                return iResult;
+                //return iResult;
+            }
+            catch (Exception ex)
+            {
+                log.LogInformation("InsertServiceNowMasterByEnterpriseId" + ex.ToString());
+                throw ex;
+            }
+        }
+
+      
+
+        public async Task<DataTable> GetEnterpriseId(int AbacusProjID, string City, string AcpStatus)
+        {
+            try
+            {
+                DataAccess daservice = new DataAccess();
+                string Query = "SELECT EnterpriseId,EmployeeFacilityMasterId FROM EmployeeFacilityMaster where abacusProjectId =" + AbacusProjID + " and  ACPStatus='" + AcpStatus + "' and city = '" + City + "' ";
+
+                SqlParameter[] objParams = new SqlParameter[0];
+                var EnterpriseId = await daservice.GetDataAsync(System.Data.CommandType.Text, Query, objParams);
+                return EnterpriseId;
+            }
+            catch (Exception ex)
+            {
+                log.LogInformation("GetEnterpriseId" + ex.ToString());
+                throw ex;
+            }
+        }
+
+        public async Task<DataTable> GetEmployeeFacilityMasterId(string enterpriseId)
+        {
+            try
+            {
+                DataAccess daservice = new DataAccess();
+                string Query = "SELECT EmployeeFacilityMasterId,city,AbacusProjectID FROM EmployeeFacilityMaster where EnterpriseId ='" + enterpriseId +"'"  ;
+
+                SqlParameter[] objParams = new SqlParameter[0];
+                var employeeFacilityMasterId = await daservice.GetDataAsync(System.Data.CommandType.Text, Query, objParams);
+                return employeeFacilityMasterId;
+            }
+            catch (Exception ex)
+            {
+                log.LogInformation("GetEmployeeFacilityMasterId" + ex.ToString());
+                throw ex;
+            }
+        }
+        public async Task<DataTable> GetEnterpriseIdByFacility(int AbacusProjID, string City, string AcpStatus, string FacilityNm)
+        {
+            DataAccess daservice = new DataAccess();
+            string Query = "SELECT EnterpriseId,EmployeeFacilityMasterId FROM EmployeeFacilityMaster where abacusProjectId =" + AbacusProjID + " and  ACPStatus='" + AcpStatus + "' and city = '" + City + "' and FacilityNm = '" + FacilityNm + "' ";
+
+            SqlParameter[] objParams = new SqlParameter[0];
+            var EnterpriseId = await daservice.GetDataAsync(System.Data.CommandType.Text, Query, objParams);
+            return EnterpriseId;
+        }
+        public async Task<DataTable> GetEnterpriseIdFacilityNm(string FacilityNm)
+        {
+            DataAccess daservice = new DataAccess();
+            string Query = "SELECT EnterpriseId,EmployeeFacilityMasterId FROM EmployeeFacilityMaster where FacilityNm = '" + FacilityNm + "' ";
+
+            SqlParameter[] objParams = new SqlParameter[0];
+            var EnterpriseId = await daservice.GetDataAsync(System.Data.CommandType.Text, Query, objParams);
+            return EnterpriseId;
+        }
+        public async Task<DataTable> GetEnterpriseIdEntity(int projectId, string City, string Entity)
+        {
+            DataAccess daservice = new DataAccess();
+            string Query = "SELECT EnterpriseId,EmployeeFacilityMasterId FROM EmployeeFacilityMaster WHERE AbacusProjectId = '" + projectId + "' and City = '" + City + "' and Entity ='" + Entity + "' and Acpstatus ='" + Constant.Unresolved + "'";
+
+            SqlParameter[] objParams = new SqlParameter[0];
+            var EnterpriseId = await daservice.GetDataAsync(System.Data.CommandType.Text, Query, objParams);
+            return EnterpriseId;
+        }
+        public async Task<List<string>> GetResignedEmployeesList()
+        {
+
+            List<string> result = new List<string>();
+
+            try
+            {
+                string apiUrl = string.Format(Environment.GetEnvironmentVariable("GetResignedEmployees"));
+
+                Uri myUri = new Uri(apiUrl, UriKind.Absolute);
+                using (var client = new WebClient())
+                {
+
+                    JwtToken.InjectJwtToken(client);
+                    var response = await client.DownloadStringTaskAsync(myUri);
+                    if (!string.IsNullOrEmpty(response))
+                    {
+                        result = JsonConvert.DeserializeObject<List<string>>(response);
+                    }
+                    return result;
+                }
+
+            }
+
+            catch (Exception ex)
+            {
+                return null;
+                throw ex;
+            }
+
+
+        }
+
+        public async Task<int> DeleteResignedEmployees(string EnterpriseIds)
+        {
+            string strQuery = "delete from EmployeeFacilityMaster WHERE EnterpriseId IN(@EnterpriseIds)";
+            SqlParameter enterpriseIds = new SqlParameter("@EnterpriseIds", SqlDbType.VarChar) { Value = EnterpriseIds };
+            SqlParameter[] objParam = new SqlParameter[1];
+            objParam[0] = enterpriseIds;
+            int iResult = await daservice.ExecuteNonQueryAsync(System.Data.CommandType.Text, strQuery, objParam);
+
+            return iResult;
+        }
+
+        public async Task<int> InsertServiceNowDetailByEnterpriseId(EmployeeFacilityMaster employeeFacilityMaster,int serviceNowMasterId)
+        {
+            try
+            {
+                DataAccess daservice = new DataAccess();
+                string query = "Insert into ServiceNowDetails (ServiceNowMasterID ,  Entity ,  BusinessUnit ,  Market ,  ProjectId ,  ProjectCode ,  EnterpriseID ,  EmployeeID ,  OldFacility ,    CreatedBy ,  CreatedDttm , " +
+                    " UpdatedBy ,  UpdatedDttm ,  ResourceStatus ,  TentativeDOJ,JoinedDate,TypeOfAssetRequired," +
+                    "AssetPONumber,AssetCollectionMethod,WorkstationType,Comments,OSImaging,SubEntity,RequireConsumables,ConsumablesHeadset,ConsumablesPONumberHeadset,ConsumablesMonitor,ConsumablesPONumberMonitor," +
+                    "ConsumablesMouse,ConsumablesPONumberMouse,ConsumablesKeyboard,ConsumablesPONumberKeyboard,ConsumablesOthers,ConsumablesPONumberOthers,WBS,DULeadEnterpriseID," +
+                    "LaptopType,PermanentModeofWorking,IsNewJoiner,WorkstationSeatDetail) VALUES" +
+                      " (@ServiceNowMasterId,null,null,null,null,null,@EnterpriseId,null,null,@CreatedBy,@CreatedDttm,@CreatedBy,@CreatedDttm,@ResourceStatus,@TentativeDOJ,@JoinedDate,@LaptopType," +
+                      "@PONumber,@AssetCollectionMethod,@WorkstationType,@Comment,@ImagingRequirement,null,@ConsumableRequirement,@ConsumablesHeadset,@ConsumablesPONumberHeadset,@ConsumablesMonitor,@ConsumablesPONumberMonitor," +
+                      "@ConsumablesMouse,@ConsumablesPONumberMouse,@ConsumablesKeyboard,@ConsumablesPONumberKeyboard,@ConsumablesOthers,@ConsumablesPONumberOthers,@WBS,null," +
+                      "null,@ModeOfWorking,@IsNewJonier,@SeatDetail)";
+
+                SqlParameter EnterpriseId = new SqlParameter("@EnterpriseId", SqlDbType.VarChar) 
+                {Value= string.IsNullOrEmpty(employeeFacilityMaster.EnterpriseId)? (object)DBNull.Value: employeeFacilityMaster.EnterpriseId  };
+                SqlParameter ServiceNowMasterID = new SqlParameter("@ServiceNowMasterID", SqlDbType.Int) { Value = serviceNowMasterId };
+                SqlParameter LaptopType = new SqlParameter("@LaptopType", SqlDbType.VarChar)
+                { Value = string.IsNullOrEmpty(employeeFacilityMaster.LaptopType) ? (object)DBNull.Value : employeeFacilityMaster.LaptopType };
+                SqlParameter ResourceStatus = new SqlParameter("@ResourceStatus", SqlDbType.VarChar)
+                { Value = string.IsNullOrEmpty(employeeFacilityMaster.ResourceStatus)? (object)DBNull.Value: employeeFacilityMaster.ResourceStatus };
+                SqlParameter TentativeDOJ = new SqlParameter("@TentativeDOJ", SqlDbType.Date) { Value =
+                    string.IsNullOrEmpty(employeeFacilityMaster.TentativeDOJ) ? (object)DBNull.Value : employeeFacilityMaster.TentativeDOJ
+                };
+                SqlParameter JoinedDate = new SqlParameter("@JoinedDate", SqlDbType.Date) { Value =
+                    string.IsNullOrEmpty(employeeFacilityMaster.ActualDOJ) ? (object)DBNull.Value : employeeFacilityMaster.ActualDOJ
+                };
+                SqlParameter PONumber = new SqlParameter("@PONumber", SqlDbType.VarChar) { Value =
+                     string.IsNullOrEmpty(employeeFacilityMaster.PONumber) ? (object)DBNull.Value : employeeFacilityMaster.PONumber
+                };
+                SqlParameter ImagingRequirement = new SqlParameter("@ImagingRequirement", SqlDbType.VarChar) { Value =
+                     string.IsNullOrEmpty(employeeFacilityMaster.ImagingRequirement) ? (object)DBNull.Value : employeeFacilityMaster.ImagingRequirement
+                };
+                SqlParameter ConsumableRequirement = new SqlParameter("@ConsumableRequirement", SqlDbType.Char)
+                {
+                    Value =
+                 Char.IsWhiteSpace(employeeFacilityMaster.ConsumableRequirement) ? (object)DBNull.Value : employeeFacilityMaster.ConsumableRequirement
+                };
+                SqlParameter AssetCollectionMethod = new SqlParameter("@AssetCollectionMethod", SqlDbType.VarChar) { Value =
+                     string.IsNullOrEmpty(employeeFacilityMaster.AssetCollectionMethod) ? (object)DBNull.Value : employeeFacilityMaster.AssetCollectionMethod
+                };
+                SqlParameter WorkstationType = new SqlParameter("@WorkstationType", SqlDbType.VarChar) { Value =
+                     string.IsNullOrEmpty(employeeFacilityMaster.WORKSTATION) ? (object)DBNull.Value : employeeFacilityMaster.WORKSTATION
+                };
+                SqlParameter ConsumablesHeadset = new SqlParameter("@ConsumablesHeadset", SqlDbType.Char)
+                {
+                    Value =
+                    Char.IsWhiteSpace(employeeFacilityMaster.ConsumablesHeadset) ? (object)DBNull.Value : employeeFacilityMaster.ConsumablesHeadset
+                }; SqlParameter ConsumablesPONumberHeadset = new SqlParameter("@ConsumablesPONumberHeadset", SqlDbType.VarChar) { Value =
+                      string.IsNullOrEmpty(employeeFacilityMaster.ConsumablesPONumberHeadset) ? (object)DBNull.Value : employeeFacilityMaster.ConsumablesPONumberHeadset
+                };            
+                SqlParameter Comment = new SqlParameter("@Comment", SqlDbType.VarChar) { Value = 
+                    string.IsNullOrEmpty(employeeFacilityMaster.Comment) ? (object)DBNull.Value : employeeFacilityMaster.Comment
+                };
+                SqlParameter ConsumablesMonitor = new SqlParameter("@ConsumablesMonitor", SqlDbType.Char) { Value = Char.IsWhiteSpace(employeeFacilityMaster.ConsumablesMonitor) ? (object)DBNull.Value : employeeFacilityMaster.ConsumablesMonitor };
+                SqlParameter ConsumablesPONumberMonitor = new SqlParameter("@ConsumablesPONumberMonitor", SqlDbType.VarChar) { Value =
+                    string.IsNullOrEmpty(employeeFacilityMaster.ConsumablesPONumberMonitor) ? (object)DBNull.Value : employeeFacilityMaster.ConsumablesPONumberMonitor
+                };
+                SqlParameter ConsumablesMouse = new SqlParameter("@ConsumablesMouse", SqlDbType.Char)
+                {
+                    Value =
+                   Char.IsWhiteSpace(employeeFacilityMaster.ConsumablesMouse) ? (object)DBNull.Value : employeeFacilityMaster.ConsumablesMouse
+                };
+                SqlParameter ConsumablesPONumberMouse = new SqlParameter("@ConsumablesPONumberMouse", SqlDbType.VarChar) { Value =
+                     string.IsNullOrEmpty(employeeFacilityMaster.ConsumablesPONumberMouse) ? (object)DBNull.Value : employeeFacilityMaster.ConsumablesPONumberMouse
+                };
+                SqlParameter ConsumablesKeyboard = new SqlParameter("@ConsumablesKeyboard", SqlDbType.Char)
+                {
+                    Value =
+                  Char.IsWhiteSpace(employeeFacilityMaster.ConsumablesKeyboard) ? (object)DBNull.Value : employeeFacilityMaster.ConsumablesKeyboard
+                }; SqlParameter ConsumablesPONumberOthers = new SqlParameter("@ConsumablesPONumberOthers", SqlDbType.VarChar) { Value =
+                    string.IsNullOrEmpty(employeeFacilityMaster.ConsumablesPONumberOthers) ? (object)DBNull.Value : employeeFacilityMaster.ConsumablesPONumberOthers
+                };
+                SqlParameter WBS = new SqlParameter("@WBS", SqlDbType.VarChar) { Value =
+                    string.IsNullOrEmpty(employeeFacilityMaster.WBSE) ? (object)DBNull.Value : employeeFacilityMaster.WBSE
+                };
+                SqlParameter CreatedBy = new SqlParameter("@CreatedBy", SqlDbType.VarChar) { Value =
+                    string.IsNullOrEmpty(employeeFacilityMaster.UpdatedBy) ? (object)DBNull.Value : employeeFacilityMaster.UpdatedBy
+                };
+                SqlParameter ConsumablesPONumberKeyboard = new SqlParameter("@ConsumablesPONumberKeyboard", SqlDbType.VarChar) { Value =
+                       string.IsNullOrEmpty(employeeFacilityMaster.ConsumablesPONumberKeyboard) ? (object)DBNull.Value : employeeFacilityMaster.ConsumablesPONumberKeyboard
+                };
+                SqlParameter ConsumablesOthers = new SqlParameter("@ConsumablesOthers", SqlDbType.Char)
+                {
+                    Value =
+                   Char.IsWhiteSpace(employeeFacilityMaster.ConsumablesOthers) ? (object)DBNull.Value : employeeFacilityMaster.ConsumablesOthers
+                }; SqlParameter ModeOfWorking = new SqlParameter("@ModeOfWorking", SqlDbType.VarChar) { Value = 
+                    string.IsNullOrEmpty(employeeFacilityMaster.ModeOfWorking) ? (object)DBNull.Value : employeeFacilityMaster.ModeOfWorking
+                };
+                SqlParameter IsNewJonier = new SqlParameter("@IsNewJonier", SqlDbType.Char) { Value = employeeFacilityMaster.IsNewJonier };
+                SqlParameter CreatedDttm = new SqlParameter("@CreatedDttm", SqlDbType.DateTime) { Value = DateTime.Now };
+                SqlParameter SeatDetail = new SqlParameter("@SeatDetail", SqlDbType.VarChar) { Value = 
+                    string.IsNullOrEmpty(employeeFacilityMaster.SeatDetail) ? (object)DBNull.Value : employeeFacilityMaster.SeatDetail
+                };
+                SqlParameter[] objPrm = new SqlParameter[28];
+
+                objPrm[0] = EnterpriseId;
+                objPrm[1] = ServiceNowMasterID;
+                objPrm[2] = CreatedBy;
+                objPrm[3] = CreatedDttm;
+                objPrm[4] = ResourceStatus;
+                objPrm[5] = TentativeDOJ;
+                objPrm[6] = JoinedDate;
+                objPrm[7] = LaptopType;
+                objPrm[8] = PONumber;
+                objPrm[9] = AssetCollectionMethod;
+                objPrm[10] = WorkstationType;
+                objPrm[11] = Comment;
+                objPrm[12] = ImagingRequirement;
+                objPrm[13] = ConsumableRequirement;
+                objPrm[14] = ConsumablesHeadset;
+                objPrm[15] = ConsumablesPONumberHeadset;
+                objPrm[16] = ConsumablesMonitor;
+                objPrm[17] = ConsumablesPONumberMonitor;
+                objPrm[18] = ConsumablesMouse;
+                objPrm[19] = ConsumablesPONumberMouse;
+                objPrm[20] = ConsumablesKeyboard;
+                objPrm[21] = ConsumablesPONumberKeyboard;
+                objPrm[22] = ConsumablesOthers;
+                objPrm[23] = ConsumablesPONumberOthers;
+                objPrm[24] = WBS;             
+                objPrm[25] = ModeOfWorking;
+                objPrm[26] = IsNewJonier;
+                objPrm[27] = SeatDetail;
+
+                int iResult = await daservice.ExecuteNonQueryAsync(System.Data.CommandType.Text, query, objPrm);
+                return iResult;
+            }
+            catch (Exception ex)
+            {
+                log.LogInformation("InsertServiceNowDetailByEnterpriseId" + ex.ToString());
+                throw ex;
+            }
+        }
+
+        public async Task<int> UpdateServiceNowMasterIdInEmployeeFacilityMaster(int serviceNowMasterId, string enterpriseId)
+        {
+
+            DataAccess baservice = new DataAccess();
+            string strQuery = @"UPDATE EmployeeFacilityMaster 
+                            SET ServiceNowMasterId = @ServiceNowMasterId"
+                           + " WHERE EnterpriseId = @EnterpriseId";
+            SqlParameter ServiceNowMasterId = new SqlParameter("@ServiceNowMasterId", SqlDbType.Int) { Value = serviceNowMasterId };
+            SqlParameter EnterpriseId = new SqlParameter("@EnterpriseId", SqlDbType.VarChar) { Value = enterpriseId };
+
+            SqlParameter[] objPrm = new SqlParameter[2];
+            objPrm[0] = ServiceNowMasterId;
+            objPrm[1] = EnterpriseId;
+
+            int iResult = await baservice.ExecuteNonQueryAsync(System.Data.CommandType.Text, strQuery, objPrm);
+
+            return iResult;
+        }
+
+        
+        public async Task<int> UpdateServiceNowDetailTable(EmployeeFacilityMaster employeeFacilityMaster, int serviceNowMasterId)
+        {
+            try
+            {
+                DataAccess daservice = new DataAccess();
+                string query = "UPDATE ServiceNowDetails SET UpdatedBy = @UpdatedBy , UpdatedDttm = @UpdatedDttm , TypeOfAssetRequired= @TypeOfAssetRequired," +
+                    "AssetPONumber= @PONumber, AssetCollectionMethod =@AssetCollectionMethod,WorkstationType=@WorkstationType,Comments = @Comment," +
+                    " OSImaging= @ImagingRequirement,SubEntity=@SubEntity, RequireConsumables= @ConsumableRequirement,ConsumablesHeadset= @ConsumablesHeadset,ConsumablesPONumberHeadset=@ConsumablesPONumberHeadset," +
+                    " ConsumablesMonitor= @ConsumablesMonitor,ConsumablesPONumberMonitor =@ConsumablesPONumberMonitor,ConsumablesMouse= @ConsumablesMouse,ConsumablesPONumberMouse =@ConsumablesPONumberMouse," +
+                    "ConsumablesKeyboard =@ConsumablesKeyboard,ConsumablesPONumberKeyboard= @ConsumablesPONumberKeyboard, ConsumablesOthers=@ConsumablesOthers," +
+                    "ConsumablesPONumberOthers= @ConsumablesPONumberOthers,WBS= @WBS,PermanentModeofWorking= @ModeOfWorking,WorkstationSeatDetail=@WORKSTATION,DULeadEnterpriseID=@DULeadEnterpriseID,LaptopType=@LaptopType,Entity=@Entity" +
+                    " where ServiceNowMasterID= @ServiceNowMasterID ";
+
+
+                SqlParameter ServiceNowMasterID = new SqlParameter("@ServiceNowMasterID", SqlDbType.Int) { Value = serviceNowMasterId };
+                SqlParameter LaptopType = new SqlParameter("@LaptopType", SqlDbType.VarChar)
+
+                { Value = string.IsNullOrEmpty(employeeFacilityMaster.LaptopType) ? (object)DBNull.Value : employeeFacilityMaster.LaptopType };
+                SqlParameter TypeOfAssetRequired = new SqlParameter("@TypeOfAssetRequired", SqlDbType.VarChar)
+
+                { Value = string.IsNullOrEmpty(employeeFacilityMaster.TypeOfAssetRequired) ? (object)DBNull.Value : employeeFacilityMaster.TypeOfAssetRequired };
+
+                SqlParameter PONumber = new SqlParameter("@PONumber", SqlDbType.VarChar)
+                {
+                    Value =
+                     string.IsNullOrEmpty(employeeFacilityMaster.PONumber) ? (object)DBNull.Value : employeeFacilityMaster.PONumber
+                };
+                SqlParameter ImagingRequirement = new SqlParameter("@ImagingRequirement", SqlDbType.VarChar)
+                {
+                    Value =
+                     string.IsNullOrEmpty(employeeFacilityMaster.ImagingRequirement) ? (object)DBNull.Value : employeeFacilityMaster.ImagingRequirement
+                };
+                SqlParameter SubEntity = new SqlParameter("@SubEntity", SqlDbType.VarChar)
+                {
+                    Value =
+                    string.IsNullOrEmpty(employeeFacilityMaster.Subentity) ? (object)DBNull.Value : employeeFacilityMaster.Subentity
+                };
+                SqlParameter DULeadEnterpriseID = new SqlParameter("@DULeadEnterpriseID", SqlDbType.VarChar)
+                {
+                    Value =
+                 string.IsNullOrEmpty(employeeFacilityMaster.DuEnterpriseId) ? (object)DBNull.Value : employeeFacilityMaster.DuEnterpriseId
+                };
+                SqlParameter ConsumableRequirement = new SqlParameter("@ConsumableRequirement", SqlDbType.Char) { Value = 
+                    Char.IsWhiteSpace(employeeFacilityMaster.ConsumableRequirement) ? (object)DBNull.Value : employeeFacilityMaster.ConsumableRequirement
+                };
+                SqlParameter AssetCollectionMethod = new SqlParameter("@AssetCollectionMethod", SqlDbType.VarChar)
+                {
+                    Value =
+                     string.IsNullOrEmpty(employeeFacilityMaster.AssetCollectionMethod) ? (object)DBNull.Value : employeeFacilityMaster.AssetCollectionMethod
+                };
+                SqlParameter WorkstationType = new SqlParameter("@WorkstationType", SqlDbType.VarChar)
+                {
+                    Value =
+                     string.IsNullOrEmpty(employeeFacilityMaster.WorkstationType) ? (object)DBNull.Value : employeeFacilityMaster.WorkstationType
+                };
+                SqlParameter ConsumablesHeadset = new SqlParameter("@ConsumablesHeadset", SqlDbType.Char) { Value =
+                      Char.IsWhiteSpace(employeeFacilityMaster.ConsumablesHeadset)? (object)DBNull.Value : employeeFacilityMaster.ConsumablesHeadset
+                };
+                SqlParameter ConsumablesPONumberHeadset = new SqlParameter("@ConsumablesPONumberHeadset", SqlDbType.VarChar)
+                {
+                    Value =
+                      string.IsNullOrEmpty(employeeFacilityMaster.ConsumablesPONumberHeadset) ? (object)DBNull.Value : employeeFacilityMaster.ConsumablesPONumberHeadset
+                };
+                SqlParameter Comment = new SqlParameter("@Comment", SqlDbType.VarChar)
+                {
+                    Value =
+                    string.IsNullOrEmpty(employeeFacilityMaster.Comment) ? (object)DBNull.Value : employeeFacilityMaster.Comment
+                };
+                SqlParameter ConsumablesMonitor = new SqlParameter("@ConsumablesMonitor", SqlDbType.Char) { Value = Char.IsWhiteSpace(employeeFacilityMaster.ConsumablesMonitor) ? (object)DBNull.Value : employeeFacilityMaster.ConsumablesMonitor };
+                SqlParameter ConsumablesPONumberMonitor = new SqlParameter("@ConsumablesPONumberMonitor", SqlDbType.VarChar)
+                {
+                    Value =
+                    string.IsNullOrEmpty(employeeFacilityMaster.ConsumablesPONumberMonitor) ? (object)DBNull.Value : employeeFacilityMaster.ConsumablesPONumberMonitor
+                };
+                SqlParameter ConsumablesMouse = new SqlParameter("@ConsumablesMouse", SqlDbType.Char) { Value =
+                     Char.IsWhiteSpace(employeeFacilityMaster.ConsumablesMouse) ? (object)DBNull.Value : employeeFacilityMaster.ConsumablesMouse
+                };
+                SqlParameter ConsumablesPONumberMouse = new SqlParameter("@ConsumablesPONumberMouse", SqlDbType.VarChar)
+                {
+                    Value =
+                     string.IsNullOrEmpty(employeeFacilityMaster.ConsumablesPONumberMouse) ? (object)DBNull.Value : employeeFacilityMaster.ConsumablesPONumberMouse
+                };
+                SqlParameter ConsumablesKeyboard = new SqlParameter("@ConsumablesKeyboard", SqlDbType.Char) { Value =
+                    Char.IsWhiteSpace(employeeFacilityMaster.ConsumablesKeyboard) ? (object)DBNull.Value : employeeFacilityMaster.ConsumablesKeyboard
+                };
+                SqlParameter ConsumablesPONumberOthers = new SqlParameter("@ConsumablesPONumberOthers", SqlDbType.VarChar)
+                {
+                    Value =
+                    string.IsNullOrEmpty(employeeFacilityMaster.ConsumablesPONumberOthers) ? (object)DBNull.Value : employeeFacilityMaster.ConsumablesPONumberOthers
+                };
+                SqlParameter WBS = new SqlParameter("@WBS", SqlDbType.VarChar)
+                {
+                    Value =
+                    string.IsNullOrEmpty(employeeFacilityMaster.WBSE) ? (object)DBNull.Value : employeeFacilityMaster.WBSE
+                };
+                SqlParameter UpdatedBy = new SqlParameter("@UpdatedBy", SqlDbType.VarChar)
+                {
+                    Value =
+                    string.IsNullOrEmpty(employeeFacilityMaster.UpdatedBy) ? (object)DBNull.Value : employeeFacilityMaster.UpdatedBy
+                };
+                SqlParameter ConsumablesPONumberKeyboard = new SqlParameter("@ConsumablesPONumberKeyboard", SqlDbType.VarChar)
+                {
+                    Value =
+                       string.IsNullOrEmpty(employeeFacilityMaster.ConsumablesPONumberKeyboard) ? (object)DBNull.Value : employeeFacilityMaster.ConsumablesPONumberKeyboard
+                };
+                SqlParameter ConsumablesOthers = new SqlParameter("@ConsumablesOthers", SqlDbType.Char) { Value =
+                    Char.IsWhiteSpace(employeeFacilityMaster.ConsumablesOthers) ? (object)DBNull.Value : employeeFacilityMaster.ConsumablesOthers
+                };
+                SqlParameter ModeOfWorking = new SqlParameter("@ModeOfWorking", SqlDbType.VarChar)
+                {
+                    Value =
+                    string.IsNullOrEmpty(employeeFacilityMaster.ModeOfWorking) ? (object)DBNull.Value : employeeFacilityMaster.ModeOfWorking
+                };
+                //SqlParameter IsNewJonier = new SqlParameter("@IsNewJonier", SqlDbType.Char) { Value = employeeFacilityMaster.IsNewJonier };
+                SqlParameter UpdatedDttm = new SqlParameter("@UpdatedDttm", SqlDbType.DateTime) { Value = DateTime.Now };
+                SqlParameter WORKSTATION = new SqlParameter("@WORKSTATION", SqlDbType.VarChar)
+                {
+                    Value =
+                    string.IsNullOrEmpty(employeeFacilityMaster.WORKSTATION) ? (object)DBNull.Value : employeeFacilityMaster.WORKSTATION
+                };
+                
+                      SqlParameter Entity = new SqlParameter("@Entity", SqlDbType.VarChar)
+                      {
+                          Value =
+                    string.IsNullOrEmpty(employeeFacilityMaster.Entity) ? (object)DBNull.Value : employeeFacilityMaster.Entity
+                      };
+                SqlParameter[] objPrm = new SqlParameter[27];
+
+                objPrm[0] = UpdatedBy;
+                objPrm[1] = UpdatedDttm;
+                objPrm[2] = TypeOfAssetRequired;
+                objPrm[3] = PONumber;               
+                objPrm[4] = AssetCollectionMethod;
+                objPrm[5] = WorkstationType;
+                objPrm[6] = Comment;
+                objPrm[7] = ImagingRequirement;
+                objPrm[8] = SubEntity;
+                objPrm[9] = ConsumableRequirement;
+                objPrm[10] = ConsumablesHeadset;
+                objPrm[11] = ConsumablesPONumberHeadset;
+                objPrm[12] = ConsumablesMonitor;
+                objPrm[13] = ConsumablesPONumberMonitor;
+                objPrm[14] = ConsumablesMouse;
+                objPrm[15] = ConsumablesPONumberMouse;
+                objPrm[16] = ConsumablesKeyboard;
+                objPrm[17] = ConsumablesPONumberKeyboard;
+                objPrm[18] = ConsumablesOthers;
+                objPrm[19] = ConsumablesPONumberOthers;
+                objPrm[20] = WBS;
+                objPrm[21] = ModeOfWorking;
+              //  objPrm[21] = IsNewJonier;
+                objPrm[22] = WORKSTATION;
+                objPrm[23] = LaptopType;
+                objPrm[24] = DULeadEnterpriseID;
+                objPrm[25] = Entity;
+                objPrm[26] = ServiceNowMasterID;
+
+                int iResult = await daservice.ExecuteNonQueryAsync(System.Data.CommandType.Text, query, objPrm);
+                return iResult;
+            }
+            catch (Exception ex)
+            {
+                log.LogInformation("UpdateServiceNowDetailTable" + ex.ToString());
+                throw ex;
+            }
+        }
+           
+
+        public async Task<DataTable> CheckExistRecordEmplyeeFacility(int EmpFacMastId)
+        {
+            DataAccess daservice = new DataAccess();
+            string Query = "SELECT EmployeeFacilityMasterId,AbacusProjectID,FacilityNm,facilityCd FROM EmployeeFacilityMaster where EmployeeFacilityMasterId= @EmployeeFacilityMasterId and ACPStatus = '" + Constant.Resolved + "' ";
+
+            SqlParameter EmployeeFacilityMasterId = new SqlParameter("@EmployeeFacilityMasterId", SqlDbType.VarChar) { Value = EmpFacMastId };
+            SqlParameter[] objParams = new SqlParameter[1];
+            objParams[0] = EmployeeFacilityMasterId;
+            var resEmp = await daservice.GetDataAsync(System.Data.CommandType.Text, Query, objParams);
+            return resEmp;
+        }
+        public async Task<int> UpdatePreviousFacility(int EmpFacilityMasterId, string facilityNm, string FacilityCd, int isSez)
+        {
+            string strIsSez = null;
+            if (isSez == 1)
+            {
+                strIsSez = "Y";
+            }
+            else
+            {
+                strIsSez = "N";
+            }
+            DataAccess baservice = new DataAccess();
+            string strQuery = @"UPDATE EmployeeFacilityMaster SET PreviousFacility = @FacilityNm,PreviousFacilityCd = @facilityCd,PreviousFacilityIsSEZ=@PreviousFacilityIsSEZ " +
+                               "WHERE EmployeeFacilityMasterId = @EmployeeFacilityMasterId ";
+            SqlParameter EmployeeFacilityMasterId = new SqlParameter("@EmployeeFacilityMasterId", SqlDbType.VarChar) { Value = EmpFacilityMasterId };
+            SqlParameter FacilityNm = new SqlParameter("@FacilityNm", SqlDbType.VarChar) { Value = facilityNm };
+            SqlParameter facilityCd = new SqlParameter("@facilityCd", SqlDbType.VarChar) { Value = FacilityCd };
+            SqlParameter PreviousFacilityIsSEZ = new SqlParameter("@PreviousFacilityIsSEZ", SqlDbType.VarChar) { Value = strIsSez };
+
+            SqlParameter[] objPrm = new SqlParameter[4];
+            objPrm[0] = EmployeeFacilityMasterId;
+            objPrm[1] = FacilityNm;
+            objPrm[2] = facilityCd;
+            objPrm[3] = PreviousFacilityIsSEZ;
+
+            int iResult = await baservice.ExecuteNonQueryAsync(System.Data.CommandType.Text, strQuery, objPrm);
+            return iResult;
+        }
+        public async Task<DataTable> CheckRecordIsSEZ(int AbacusProjId, string facilityNm)
+        {
+            DataAccess daservice = new DataAccess();
+            string Query = "SELECT IsSEZ FROM ProjectFacilityMaster where AbacusProjectId= @AbacusProjectId and FacilityNm = @FacilityNm ";
+
+            SqlParameter AbacusProjectId = new SqlParameter("@AbacusProjectId", SqlDbType.Int) { Value = AbacusProjId };
+            SqlParameter FacilityNm = new SqlParameter("@FacilityNm", SqlDbType.VarChar) { Value = facilityNm };
+            SqlParameter[] objParams = new SqlParameter[2];
+            objParams[0] = AbacusProjectId;
+            objParams[1] = FacilityNm;
+            var resEmp = await daservice.GetDataAsync(System.Data.CommandType.Text, Query, objParams);
+            return resEmp;
+        }
+        public async Task<DataTable> GetAbacusProjID(string EnterpriseId)
+        {
+            try
+            {
+                DataAccess daservice = new DataAccess();
+                string Query = "SELECT AbacusProjectID FROM EmployeeFacilityMaster where EnterpriseId = '" + EnterpriseId + "' ";
+
+                SqlParameter[] objParams = new SqlParameter[0];
+                var AbacusProjId = await daservice.GetDataAsync(System.Data.CommandType.Text, Query, objParams);
+                return AbacusProjId;
+            }
+            catch (Exception ex)
+            {
+                log.LogInformation("GetAbacusProjID" + ex.ToString());
+                throw ex;
+            }
+        }
+
+        public async Task<List<AllLocationModel>> GetAllLocations()
+        {
+            List<AllLocationModel> objList = new List<AllLocationModel>();
+            string apiUrl = string.Format(Environment.GetEnvironmentVariable("GetALLLocationFromMaster"));
+
+            Uri myUri = new Uri(apiUrl, UriKind.Absolute);
+            using (var client = new WebClient())
+            {
+                //token Insert
+                JwtToken.InjectJwtToken(client);
+                var response = await client.DownloadStringTaskAsync(myUri);
+                if (!string.IsNullOrEmpty(response))
+                {
+                    objList = JsonConvert.DeserializeObject<List<AllLocationModel>>(response);
+                }
+            }
+            return objList;
+        }
+    }
+}
