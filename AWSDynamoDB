@@ -1,0 +1,189 @@
+using Amazon.DynamoDBv2;
+using Amazon.DynamoDBv2.DocumentModel;
+using Amazon.DynamoDBv2.Model;
+using Amazon.Lambda.Core;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+using RTO_GenerateTMSFile.Utilities;
+
+namespace RTO_GenerateTMSFile
+{
+    public class RTODynamoDb
+    {
+        static IAmazonDynamoDB dbClient { get; set; }
+        public static Amazon.DynamoDBv2.DataModel.DynamoDBContext db { get; set; }
+
+        public RTODynamoDb()
+        {
+            dbClient = new AmazonDynamoDBClient();
+            db = new Amazon.DynamoDBv2.DataModel.DynamoDBContext(dbClient);
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <typeparam name="T"></typeparam>
+        /// <param name="tObject"></param>
+        /// <param name="tableName"></param>
+        /// <param name="context"></param>
+        /// <returns></returns>
+        public async Task InsertAsync<T>(T tObject, string tableName, ILambdaContext context)
+        {
+            Table table = Table.LoadTable(dbClient, tableName);
+            var document = RTODynamoDocumentConverter.ToDocument(tObject);
+            await table.PutItemAsync(document);
+        }
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <typeparam name="T"></typeparam>
+        /// <param name="tObject"></param>
+        /// <param name="tableName"></param>
+        /// <param name="context"></param>
+        /// <returns></returns>
+        public async Task UpdateItemAsync<T>(T tObject, string tableName, ILambdaContext context)
+        {
+            Table table = Table.LoadTable(dbClient, tableName);
+            Document document = RTODynamoDocumentConverter.ToDocument(tObject);
+            await table.UpdateItemAsync(document);
+        }
+
+        public async Task<List<T>> Query<T>(QueryRequest request, ILambdaContext context)
+        {
+            try
+            {
+                Dictionary<string, AttributeValue> lastKeyEvaluated = null;
+                List<T> resultList = new List<T>();
+                do
+                {
+                    request.ExclusiveStartKey = lastKeyEvaluated;
+                    var response = await dbClient.QueryAsync(request);
+
+                    foreach (Dictionary<string, AttributeValue> item in response.Items)
+                    {
+                        var document = Document.FromAttributeMap(item);
+                        if (item.Count > 0)
+                        {
+                            resultList.Add(RTODynamoDocumentConverter.ToObject<T>(document));
+                        }
+                    }
+                    lastKeyEvaluated = response.LastEvaluatedKey;
+                } while (lastKeyEvaluated != null && lastKeyEvaluated.Count != 0);
+
+                return resultList;
+            }
+            catch (Exception e)
+            {
+                context.Logger.LogLine($"{Constants.Exception1} - {e.Message}");
+                context.Logger.LogLine($"{Constants.Exception2} - {e.InnerException}");
+                context.Logger.LogLine($"{Constants.Exception3} - {e.StackTrace}");
+                throw;
+            }
+        }
+
+        public List<T> QueryOnPrimaryKey<T>(string tableName, ILambdaContext context, string Field, string value)
+        {
+            Table table = Table.LoadTable(dbClient, tableName);
+            QueryFilter filter = new QueryFilter(Field, QueryOperator.Equal, value);
+            Search search = table.Query(filter);
+            List<Document> documentSet = new List<Document>();
+
+            List<T> resultList = new List<T>();
+            List<Document> documentList = new List<Document>();
+            do
+            {
+                documentList = search.GetNextSetAsync().Result;
+                foreach (var document in documentList)
+                {
+                    resultList.Add(RTODynamoDocumentConverter.ToObject<T>(document));
+                }
+            } while (!search.IsDone);
+
+            return resultList;
+        }
+        /// <summary>
+        /// Updates the given request
+        /// </summary>
+        /// <typeparam name="T"></typeparam>
+        /// <param name="tObject"></param>
+        /// <param name="tableName"></param>
+        /// <param name="context"></param>
+        /// <returns></returns>
+        public async Task UpdateItem(UpdateItemRequest request, ILambdaContext context)
+        {
+            await dbClient.UpdateItemAsync(request);
+        }
+
+        public async Task<List<T>> getdetails<T>(List<string> enterpriseID)
+        {
+            var employeeMaster = db.CreateBatchGet<T>();
+            foreach (var id in enterpriseID)
+            {
+                employeeMaster.AddKey(id);
+            }
+            await employeeMaster.ExecuteAsync();
+            Console.WriteLine(employeeMaster.Results.Count);
+            return employeeMaster.Results.ToList();
+
+        }
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <typeparam name="T"></typeparam>
+        /// <param name="scanFilterCondition"></param>
+        /// <param name="tableName"></param>
+        /// <param name="context"></param>
+        /// <returns></returns>
+        public async Task<List<T>> ScanAsync<T>(ScanFilter scanFilterCondition, string tableName, ILambdaContext context)
+        {
+            Table table = Table.LoadTable(dbClient, tableName);
+            Search search = table.Scan(scanFilterCondition);
+
+            List<T> resultList = new List<T>();
+            List<Document> documentList = new List<Document>();
+            do
+            {
+                documentList = await search.GetNextSetAsync();
+                foreach (var document in documentList)
+                {
+                    resultList.Add(RTODynamoDocumentConverter.ToObject<T>(document));
+                }
+            } while (!search.IsDone);
+
+            return resultList;
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="obj">Object with only attributes need update has to be intialised otherwise all other atribute
+        /// values will be over written, primary keys are mondatary 
+        /// </param>
+        /// <param name="tableName"></param>
+        /// <returns></returns>
+
+
+        public async Task<List<T>> FilterScanSpecificAttribute<T>(ScanOperationConfig scanFilterCondition, string tableName)
+        {
+            Table table = Table.LoadTable(dbClient, tableName);
+            Search search = table.Scan(scanFilterCondition);
+
+            List<T> resultList = new List<T>();
+            List<Document> documentList = new List<Document>();
+            do
+            {
+                documentList = await search.GetNextSetAsync();
+                foreach (var document in documentList)
+                {
+                    resultList.Add(RTODynamoDocumentConverter.ToObject<T>(document));
+                }
+            } while (!search.IsDone);
+
+            return resultList;
+        }
+
+    }
+}
