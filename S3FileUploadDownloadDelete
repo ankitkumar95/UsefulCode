@@ -1,0 +1,119 @@
+
+    #region UploadFileToAmazon
+    public bool UploadFileToAmazon(string fileName, string filePath)
+    {
+        bool status = false;
+        using (client = new AmazonS3Client(awsAccessKey, awsSecretKey, RegionEndpoint.USEast1))
+        {
+            try
+            {
+                PutObjectRequest request = new PutObjectRequest
+                {
+                    BucketName = bucketName,
+                    Key = fileName,
+                    FilePath = filePath,
+                    CannedACL = S3CannedACL.Private,
+                    StorageClass = "STANDARD"
+
+                };
+                request.Metadata.Add("x-amz-meta-title", "someTitle");
+
+                PutObjectResponse response = client.PutObject(request);
+
+                if (File.Exists(filePath))
+                    File.Delete(filePath);
+
+                status = true;
+
+            }
+            catch (AmazonS3Exception amazonS3Exception)
+            {
+                if (amazonS3Exception.ErrorCode != null &&
+                    (amazonS3Exception.ErrorCode.Equals("InvalidAccessKeyId")
+                    ||
+                    amazonS3Exception.ErrorCode.Equals("InvalidSecurity")))
+                {
+                }
+                else
+                {
+                    insertQry.Append("INSERT INTO Tbl_TMS_Smart_Services_Response VALUES " + "('" + amazonS3Exception.ErrorCode + " : " + amazonS3Exception.Message + "', 'Amazon S3 Exception', '" + Session["UserId"].ToString().Trim() + "', '" + DateTime.Now.ToShortDateString() + " " + DateTime.Now.ToLongTimeString() + "'); ");
+                    arrayCount = SqlHelper.ExecuteNonQuery(connectionString, CommandType.Text, insertQry.ToString());
+                }
+            }
+        }
+
+        return status;
+    }
+    #endregion UploadFileToAmazon
+
+    #region DownloadByFileName
+    public void DownloadByFileName(string fileName)
+    {
+        string localServerUploadPath = Server.MapPath(localUploadFolder);
+        string downloadfolder = Server.MapPath(localDownloadFolder);
+        string downloadFilePath = Path.Combine(downloadfolder, fileName);
+
+        using (client = new AmazonS3Client(awsAccessKey, awsSecretKey, RegionEndpoint.USEast1))
+        {
+            GetObjectRequest request = new GetObjectRequest
+            {
+                BucketName = bucketName,
+                Key = fileName
+            };
+
+            try
+            {
+                using (GetObjectResponse response = client.GetObject(request))
+                {
+                    response.WriteResponseStreamToFile(downloadFilePath);
+                }
+            }
+            catch (Exception)
+            {
+                ////If File doesnot exists in Amazon, check if file exists in local.
+            }
+
+        }
+        if (File.Exists(downloadFilePath))
+        {
+            string newUrl = "DriverMasterDownloadFile.aspx?fileName=" + fileName;
+            ScriptManager.RegisterClientScriptBlock(this, this.GetType(), "Download", "window.location='" + newUrl + "';", true);
+        }
+        else
+            ScriptManager.RegisterStartupScript(Page, Page.GetType(), "PopUp",
+                   "alert('File cannot be downloaded. Either file is missing or file is corrupted.');", true);
+
+    }
+    #endregion DownloadByFileName
+
+    #region DeleteDocumentFromServer
+    public void DeleteDocumentFromServer(string deleteDocNames)
+    {
+        if (!string.IsNullOrEmpty(deleteDocNames))
+        {
+            string[] deleteDocumentNames = null;
+            deleteDocumentNames = deleteDocNames.Split(';');
+            foreach (string strId in deleteDocumentNames)
+
+                using (client = new AmazonS3Client(awsAccessKey, awsSecretKey, RegionEndpoint.USEast1))
+                {
+                    DeleteObjectRequest deleteObjectRequest =
+                    new DeleteObjectRequest
+                    {
+                        BucketName = bucketName,
+                        Key = strId
+                    };
+
+                    try
+                    {
+                        client.DeleteObject(deleteObjectRequest);
+                    }
+                    catch (Exception)
+                    {
+
+                    }
+                }
+
+        }
+    }
+    #endregion DeleteDocumentFromServer
