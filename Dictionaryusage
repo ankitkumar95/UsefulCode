@@ -1,0 +1,15 @@
+var existingTransactionObject = DbExistingEmployees.Where(r => r.EnterpriseId == item.EnterpriseId).Select(r => r).FirstOrDefault();
+
+                    Dictionary<string, AttributeValue> key = new Dictionary<string, AttributeValue>
+                                {
+                                    {Constants.Col_EnterpriseId, new AttributeValue { S = item.EnterpriseId }}
+                                };
+
+                    Dictionary<string, string> expressionAttributeNames = new Dictionary<string, string>();
+                    Dictionary<string, AttributeValue> expressionAttributeValues = new Dictionary<string, AttributeValue>();
+
+                    string updateExpression = null;
+
+                    expressionAttributeNames.Add("#Col_ModifiedDttm", Constants.Col_ModifiedDttm);
+                    expressionAttributeValues.Add(":modifiedDttmValue", new AttributeValue() { S = currentTime });
+                    updateExpression = "SET #Col_ModifiedDttm = :modifiedDttmValue ";
