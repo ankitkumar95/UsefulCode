@@ -1,0 +1,232 @@
+import { Injectable } from '@angular/core';
+import { HttpClient, HttpRequest, HttpEvent, HttpParams } from '@angular/common/http';
+import { Observable } from 'rxjs';
+import { BaseService } from '@app/core/services/base.service';
+import { AppConfigService } from '@app/core/services/app-config.service';
+import { timeout } from 'rxjs/operators';
+import { UserManagementService } from '@app/appservices/common/common/user-management.service';
+import { ProjectDetailsService } from '@app/appservices/common/common/project-details.service';
+import { SuccessEvent } from '@progress/kendo-angular-upload';
+import { constant } from '@app/shared/constant';
+
+
+@Injectable({
+  providedIn: 'root'
+})
+export class EmployeeFacilityMappingService {
+  serivceUrls: any = null;
+  allProjectList = [];
+  projectFacilityStatusData = [];
+  allCityList = [];
+  uiProjectFacility = [];
+
+  constructor(private projectdetailsService: ProjectDetailsService,private userManagementService: UserManagementService,private http: HttpClient,private baseService:BaseService,private appConfig: AppConfigService) 
+  {
+
+    this.serivceUrls = this.appConfig.getServiceUrls(); 
+  }
+  public GetEmployeeOfProject(entity,projectId): Promise<any> {
+
+    return this.baseService.get(
+      //For Dev
+     this.serivceUrls.hostEndpoint.EmployeeFacilityServices +
+    this.serivceUrls.serviceEndpoint.EmployeeFacilityServices.GetEmployeeOfProject + '?ProjectId=' + projectId + '&Entity=' + entity
+    ).pipe(timeout(180000)).toPromise();
+  // "http://localhost:7071/api/FnGetProjectEmployee" + '?ProjectId=' + projectId  + '&Entity=' + entity
+  //).pipe(timeout(180000)).toPromise();
+    
+  }
+
+  public GetFacilityStatusOfProject(projectId,entity, acpStatus): Promise<any> {
+
+    return this.baseService.get(
+      //For Dev
+     this.serivceUrls.hostEndpoint.EmployeeFacilityServices +
+   this.serivceUrls.serviceEndpoint.EmployeeFacilityServices.GetFacilityStatusOfProject + '?ProjectId=' + projectId + '&Entity=' + entity+ '&Status=' + acpStatus
+     ).pipe(timeout(180000)).toPromise();
+ //  "http://localhost:7071/api/FnGetFacilityStatusOfProject" + '?ProjectId=' + projectId  + '&Entity=' + entity + '&Status=' + acpStatus
+ // ).pipe(timeout(180000)).toPromise();
+    
+  }
+
+  public UpdateFacilityOfEmployee(data): Promise<any> {
+    //for dev
+    return this.baseService.post(
+         this.serivceUrls.hostEndpoint.EmployeeFacilityServices +
+         this.serivceUrls.serviceEndpoint.EmployeeFacilityServices.UpdateEmployeeFacility,data).pipe(timeout(180000)).toPromise();
+      //  "http://localhost:7071/api/FnUpdateEmployeeFacility",data).pipe(timeout(180000)).toPromise();
+
+  }
+  
+  public async GetFDSProjectData(resourceId,status): Promise<any> {
+
+    const tempProjectList = [];
+   
+    let POCAccessDetails = await this.userManagementService.getAccessRole_ssot(resourceId, 'PR')
+      //Removing duplicate Entity
+      let pocEntity = POCAccessDetails.ListUserEntity.reduce((accumalator, current) => {
+        if (!accumalator.some(item => item.EntityId === current.EntityId)) {
+          accumalator.push(current);
+        }
+        return accumalator;
+      }, []);
+      for (var i in pocEntity) {
+        try
+        {
+        let ProjectData = await this.projectdetailsService.getProjectsInfo_SSOT(pocEntity[i].EntityId)
+        if (ProjectData == null)
+          continue;
+        this.allProjectList.push({ ProjectNm: ProjectData[0].ProjectNm, ProjectId: ProjectData[0].DSMProjectId, Entity: ProjectData[0].Entity });
+        let facilityResponse = await this.GetFacilityStatusOfProject(ProjectData[0].DSMProjectId, ProjectData[0].Entity, status);
+        if (facilityResponse.length > 0) {
+          facilityResponse.forEach(element => { this.projectFacilityStatusData.push(element); })
+          tempProjectList.push({ ProjectNm: ProjectData[0].ProjectNm, ProjectId: ProjectData[0].DSMProjectId, Entity: ProjectData[0].Entity });
+        }
+
+        var locationDetail = await this.projectdetailsService.getProjectLocations_SSOT(pocEntity[i].LocationId);
+        locationDetail.forEach(element => {
+          this.allCityList.push({ ProjectId: ProjectData[0].DSMProjectId, Locations: { LocationId: element.LocationId, LocationNm: element.LocationNm }});
+          let city = this.projectFacilityStatusData.filter(x => x.AbacusprojectId == ProjectData[0].DSMProjectId && x.City == element.LocationNm);
+          if (city.length > 0) {
+            this.uiProjectFacility.push({ ProjectId: ProjectData[0].DSMProjectId, Locations: { LocationId: element.LocationId, LocationNm: element.LocationNm } })
+          }
+
+        });
+      }
+      catch (Error) {
+        //this.showLoader = false;
+        console.log(Error.message);
+        continue;
+      }
+
+      }
+    return tempProjectList;
+   }
+
+   public ValidateData(employeeForFacilityMapping,rowIndex,Entity,ValidationResult,ConsumablesPoNumber){
+    var allmandatfieldValidated=false;
+    var assetfieldvalidated=false;
+    var ConsumablesValidated=false;
+    var laptoptypevalidated=false;
+    var element=employeeForFacilityMapping;
+
+    if (element["selectedTypeOfAssetRequired"]=="No Asset Required")
+    {
+      allmandatfieldValidated=true;
+      assetfieldvalidated=true;
+      ConsumablesValidated=true; 
+    }
+
+    else{
+      if(Entity==constant.AIOC){
+        if(element["selectedTypeOfAssetRequired"]!="No Asset Required" && element["selectedTypeOfAssetRequired"]!=undefined){
+            if(element["SelectedAssetCollectionMethod"]!=undefined && element["SelectedWorkstationType"]!=undefined  && element["selectedModeOfWorking"]!=undefined && element["ConsumableRequirement"]!=undefined && element["selectedOSImagingRequirement"]!=undefined)
+            allmandatfieldValidated=true;
+            if(element["selectedTypeOfAssetRequired"]=="Project" || element["selectedTypeOfAssetRequired"]=="Client")
+            {
+                if(element["PONumber"]!=undefined)
+                assetfieldvalidated=true;
+            }
+            if(element["selectedTypeOfAssetRequired"]=="Accenture Shared")
+            assetfieldvalidated=true;
+            ConsumablesValidated=this.ValidateConsumables(element,rowIndex,ConsumablesPoNumber);
+        }
+      }
+      else if(Entity==constant.ATCI || Entity==constant.ICO ){
+        ConsumablesValidated=true;
+        if(element["selectedTypeOfAssetRequired"]!="No Asset Required" && element["selectedTypeOfAssetRequired"]!=undefined){
+          if(element["SelectedAssetCollectionMethod"]!=undefined && element["SelectedWorkstationType"]!=undefined  && element["selectedModeOfWorking"]!=undefined)
+          allmandatfieldValidated=true;
+          if(element["selectedTypeOfAssetRequired"]=="Project" || element["selectedTypeOfAssetRequired"]=="Client")
+          if(element["PONumber"]!=undefined)
+          assetfieldvalidated=true;
+          if(element["selectedTypeOfAssetRequired"]=="Accenture Shared")
+          assetfieldvalidated=true;
+        }
+      }
+      else if(Entity==constant.ICF){
+        if(element["selectedTypeOfAssetRequired"]!="No Asset Required" && element["selectedTypeOfAssetRequired"]!=undefined){
+          if(element["SelectedAssetCollectionMethod"]!=undefined && element["SelectedWorkstationType"]!=undefined  && element["selectedModeOfWorking"]!=undefined && element["ConsumableRequirement"]!=undefined && element["SubEntity"]!=undefined && element["DuEnterpriseId"]!=undefined)
+          allmandatfieldValidated=true;
+          if(element["selectedTypeOfAssetRequired"]=="Project" || element["selectedTypeOfAssetRequired"]=="Client")
+          {
+              if(element["PONumber"]!=undefined)
+              assetfieldvalidated=true;
+          }
+          if(element["selectedTypeOfAssetRequired"]=="Accenture Shared")
+          assetfieldvalidated=true;
+          if(element["SelectedWorkstationType"]=="Laptop"){
+            if(element["SelectedLaptopType"]!=undefined)
+            laptoptypevalidated=true;
+          }
+          else
+          laptoptypevalidated=true;
+          allmandatfieldValidated=allmandatfieldValidated && laptoptypevalidated;
+          ConsumablesValidated=this.ValidateConsumables(element,rowIndex,ConsumablesPoNumber);
+          
+        }
+      }
+    }
+
+    ValidationResult[rowIndex]=allmandatfieldValidated && assetfieldvalidated && ConsumablesValidated;
+    return ValidationResult[rowIndex];
+  }
+   
+
+  ValidateConsumables(element,rowIndex,ConsumablesPoNumber){
+    var Mousevalidated=false;
+    var Monitorvalidated=false;
+    var Headsetvalidated=false;
+    var Keyboardvalidated=false;
+    var othervalidated=false;
+    var WBSEvalidation=false;
+    if(element["ConsumableRequirement"]=="Y"){
+      if(element["selectedConsumables"]!=undefined && element["selectedConsumables"]!=0){
+        if(ConsumablesPoNumber["MousePoNumber"]==false && element["MousePoNumber"]!=undefined)
+          Mousevalidated=true;
+        else if (ConsumablesPoNumber["MousePoNumber"]==true)
+          Mousevalidated=true;
+        
+        if(ConsumablesPoNumber["MonitorPoNumber"]==false && element["MonitorPoNumber"]!=undefined)
+          Monitorvalidated=true;
+        
+        else if (ConsumablesPoNumber["MonitorPoNumber"]==true)
+          Monitorvalidated=true;
+
+        if(ConsumablesPoNumber["HeadsetPoNumber"]==false && element["HeadsetPONumber"]!=undefined)
+          Headsetvalidated=true;
+        
+        else if (ConsumablesPoNumber["HeadsetPoNumber"]==true)
+          Headsetvalidated=true;
+
+        if(ConsumablesPoNumber["KeyboardPoNumber"]==false && element["KeyboardPONumber"]!=undefined)
+          Keyboardvalidated=true;
+        
+        else if (ConsumablesPoNumber["KeyboardPoNumber"]==true)
+          Keyboardvalidated=true;
+
+        if(ConsumablesPoNumber["OtherPoNumber"]==false && element["otherPONumber"]!=undefined)
+          othervalidated=true;
+        
+        else if (ConsumablesPoNumber["OtherPoNumber"]==true)
+          othervalidated=true;
+
+        if(element["WBSE"]!=undefined && element["WBSE"]!="" && ConsumablesPoNumber["FlagWBSE"]==false)
+        WBSEvalidation=true;
+          
+        }
+    }
+    else if(element["ConsumableRequirement"]=="N")
+    {
+      Mousevalidated=true;
+      Monitorvalidated=true;
+      Headsetvalidated=true;
+      Keyboardvalidated=true;
+      othervalidated=true;
+      WBSEvalidation=true;
+    }    
+    var result=Mousevalidated && Monitorvalidated && Headsetvalidated && Keyboardvalidated && othervalidated && WBSEvalidation;
+    return result;
+  }
+
+}
