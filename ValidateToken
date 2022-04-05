@@ -1,0 +1,41 @@
+public bool ClaimsTransform(string oauthToken)
+        {
+            try
+            {
+                bool isAuth = false;
+
+                var authToken = oauthToken.Replace("Bearer ", "");
+                // Console.WriteLine("authToken " + authToken);
+                if (!string.IsNullOrEmpty(authToken))
+                {
+                    var handler = new JwtSecurityTokenHandler();
+                    var result = handler.ReadJwtToken(authToken);
+                    // Console.WriteLine("result " + result);
+                    if (result != null && result.Claims.FirstOrDefault(c => c.Type == "exp") != null)
+                    {
+                        DateTime expTime = FromUnixTime(Convert.ToInt64(result.Claims.FirstOrDefault(c => c.Type == "exp").Value));
+                        if (expTime > DateTime.UtcNow)
+                        {
+                            string issuer = result.Claims.FirstOrDefault(c => c.Type == "iss").Value;
+                            string appId = result.Claims.FirstOrDefault(c => c.Type == "aud").Value;
+                            if (AUTH_ISSUER == issuer)
+                            {
+                                if (AUTH_APPID.Contains(appId))
+                                    isAuth = true;
+                                else
+                                    isAuth = false;
+                            }
+                            else
+                                isAuth = false;
+                        }
+                        else
+                            isAuth = false;
+                    }
+                }
+                return isAuth;
+            }
+            catch (Exception ex)
+            {
+                throw new Exception("Not Authorized.", ex);
+            }
+        }
