@@ -1,0 +1,91 @@
+try
+            {
+                using (HttpClient client = new HttpClient())
+                {
+                    var url = RELAUNCH_TRAINING_API;
+                    var json = "{" + "CurrentDriverStatus:" + "'" + CurrentDriverStatus + "', " +
+                                 "TrainingStatus: " + "'" + TrainingStatus + "', " +
+                                 "UpdatedBy: " + "'" + UpdatedBy + "', " +
+                                 "RelaunchRemarks: " + "'" + RelaunchRemarks + "', " +
+                                 "StandBy: " + "'" + StandBy + "', " +
+                                 "UpdateTrainingStatus: " + "'" + UpdateTrainingStatus + "', " +
+                                 "RelaunchPeriod: " + "'" + RelaunchPeriod + "'}";
+
+                    var data = new StringContent(json, Encoding.UTF8, Constants.appJson);
+                    string accessToken = await cmnFunctions.GetTokenAsync();
+                    if (IsDebugging == Constants.Debugging)
+                    {
+                        context.Logger.Log("accesstoken " + accessToken);
+                        context.Logger.Log("Input Json Sent to TMS API : " + json);
+                    }
+                    client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue(Constants.bearer, accessToken);
+                    var response = await client.PostAsync(url, data);
+                    string result = response.Content.ReadAsStringAsync().Result;
+                    statusCode = response.StatusCode.ToString();
+                    if (IsDebugging == Constants.Debugging)
+                    {
+                        context.Logger.Log("Response: " + result);
+                        context.Logger.Log("StatusCode: " + statusCode);
+                    }
+                    APIOutput deserialized = JsonConvert.DeserializeObject<APIOutput>(result);
+
+                    foreach (var item in deserialized.Value)
+                    {
+                        lstLMCJson.Add(new DriverJson()
+                        {
+                            DriverName = item.DriverName,
+                            DriverId = item.DriverId,
+                            VehicleRegistrationNumber = item.VehicleRegistrationNumber,
+                            ContactNumber = item.ContactNumber,
+                            LicenseNumber = item.LicenseNumber,
+                            LicenseExpiry = item.LicenseExpiry,
+                            Attrited = item.Attrited,
+                            FacilityId = item.FacilityId,
+                            PVCStatus = item.PVCStatus,
+                            DutyType = item.DutyType,
+                            BadgeExpiry = item.BadgeExpiry,
+                            MedicalCertificate = item.MedicalCertificate,
+                            TrainingLaunchDate = item.TrainingLaunchDate,
+                            TrainingStatus = item.TrainingStatus,
+                            DriverStatus = item.DriverStatus,
+                            StandBy = item.StandBy,
+                            TrainingCompletionDate = item.TrainingCompletionDate
+                        });
+
+                        lstBPSSJson.Add(new BPSSJson()
+                        {
+                            employeeId = item.DriverId,
+                            location = item.FacilityId,
+                            newStatus = (item.DriverStatus).Trim().ToLower().Equals("attrited") ? "TERMINATED" : ((item.DriverStatus).Trim().ToLower().Equals("active") || (item.DriverStatus).Trim().ToLower().Equals("bench")) ? "HIRED" : (item.DriverStatus).ToUpper(),
+                            designation = "Driver",
+                            joinedDate = item.joinedDate,
+                            relievedDate = item.relievedDate,
+                            comment = item.comment,
+                            commentRank = (item.DriverStatus).Trim().ToLower().Equals("terminated") ? "BAD" : (item.DriverStatus).Trim().ToLower().Equals("attrited") ? "GOOD" : null,
+                            clientReferenceId = item.clientReferenceId,
+                            referenceType = "Employee",
+                            subscriptionCategory = "",
+                            Action = "Update",
+                            trainingLaunchDate = item.TrainingLaunchDateBPSS
+                        });
+                    }
+
+                    serializedBPSSJson = System.Text.Json.JsonSerializer.Serialize(lstBPSSJson);
+                    serializedLMCJson = System.Text.Json.JsonSerializer.Serialize(lstLMCJson);
+
+                    if (IsDebugging == Constants.Debugging)
+                    {
+                        context.Logger.Log("lstLMCJson: " + serializedLMCJson);
+                        context.Logger.Log("lstBPSSJson: " + serializedBPSSJson);
+                    }
+
+                    if (lstLMCJson != null && lstLMCJson.Count > 0)
+                        await SendDriverDataToLMC(lstLMCJson, context);
+                    else
+                        context.Logger.Log("Empty LMC payload");
+
+                    if (lstBPSSJson != null && lstBPSSJson.Count > 0)
+                        await SendDriverDataToBPSS(lstBPSSJson, context);
+                    else
+                        context.Logger.Log("Empty BPSS payload");
+                }
