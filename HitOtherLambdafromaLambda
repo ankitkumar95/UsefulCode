@@ -1,0 +1,37 @@
+Output output = new Output();
+            InvokeLambdaService invoke = new InvokeLambdaService();
+            AccessValidator ac = new AccessValidator();
+            invoke.action = input.action;
+            invoke.LoggedinUser = ac.GetEnterpriseId(input.Parameters.headers.Authorization, context);
+            var inputRequest = JsonConvert.SerializeObject(invoke);
+            string response = string.Empty;
+
+            try
+            {
+                if (ac.ClaimsTransform(input.Parameters.headers.Authorization))
+                {
+                    AmazonLambdaClient lambdaclient = new AmazonLambdaClient();
+                    InvokeRequest invokeRequest = new InvokeRequest
+                    {
+                        FunctionName = Constants.LambdaService,
+                        InvocationType = InvocationType.Event,
+                        Payload = inputRequest,
+                    };
+                    var invokeResponse = lambdaclient.InvokeAsync(invokeRequest);
+
+                    output.statusCode = invokeResponse.Result.StatusCode.ToString();
+                    output.message = Constants.WorkFlowlambdaTrigger;
+                }
+                else
+                {
+                    output.message = Constants.AuthFailure;
+                }
+            }
+
+            catch(Exception ex)
+            {
+                logs.CreateLogs(ex.Message + ex.InnerException, "GenerateFileForLambda_FunctionHandler", Constants.SeverityErr, context);
+                throw;
+            }
+            return output;
+        }
