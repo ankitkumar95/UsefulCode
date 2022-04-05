@@ -1,0 +1,119 @@
+using ExcelDataReader;
+using System;
+using System.Data;
+using System.IO;
+using System.Text;
+using Amazon.Lambda.Core;
+using DocumentFormat.OpenXml.Packaging;
+using DocumentFormat.OpenXml;
+using DocumentFormat.OpenXml.Spreadsheet;
+
+namespace RTO_UploadInputFile.Utilities
+{
+    class ExcelReader
+    {
+        //Converts the given stream to Datatable
+        public DataTable ExcelStreamToDataTableConverter(MemoryStream memoryStream, ILambdaContext context)
+        {
+            try
+            {
+                Stream stream = new MemoryStream();
+                memoryStream.CopyTo(stream);
+                stream.Seek(0, SeekOrigin.Begin);
+                Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+                IExcelDataReader excelReader = ExcelReaderFactory.CreateOpenXmlReader(stream);
+                var dataSet = excelReader.AsDataSet();
+                excelReader.Close();
+                DataTable dataTable = new DataTable();
+                dataTable = dataSet.Tables[0];
+
+                return dataTable;
+            }
+            catch (Exception e)
+            {
+                context.Logger.Log($"{Constants.FailedExcelConversion} - {e.Message}");
+                context.Logger.Log($"{Constants.Exception2} - {e.InnerException}");
+                context.Logger.Log($"{Constants.Exception3} - {e.StackTrace}");
+                return null;
+            }
+        }
+
+        //Generates an excel for the given datatable
+        internal MemoryStream GenerateExcel(DataTable dataTable, ILambdaContext context)
+        {
+            MemoryStream memoryStream = new MemoryStream();
+            SpreadsheetDocument spreadsheetDocument = SpreadsheetDocument.
+            Create(memoryStream, SpreadsheetDocumentType.Workbook);
+            try
+            {
+                WorkbookPart workbookpart = spreadsheetDocument.AddWorkbookPart();
+                workbookpart.Workbook = new Workbook();
+
+                // Add a WorksheetPart to the WorkbookPart.
+                var worksheetPart = workbookpart.AddNewPart<WorksheetPart>();
+                var sheetData = new SheetData();
+                worksheetPart.Worksheet = new Worksheet(sheetData);
+
+                var bold1 = new Bold();
+                CellFormat cf = new CellFormat();
+
+                // Add Sheets to the Workbook.
+                Sheets sheets;
+                sheets = spreadsheetDocument.WorkbookPart.Workbook.
+                    AppendChild<Sheets>(new Sheets());
+
+                // Append a new worksheet and associate it with the workbook.
+                var sheet = new Sheet()
+                {
+                    Id = spreadsheetDocument.WorkbookPart.
+                        GetIdOfPart(worksheetPart),
+                    SheetId = 1,
+                    Name = Constants.Records
+                };
+                sheets.Append(sheet);
+
+                //Add Header Row.
+                var headerRow = new Row();
+                foreach (DataColumn column in dataTable.Columns)
+                {
+                    var cell = new Cell
+                    {
+                        DataType = CellValues.String,
+                        CellValue = new CellValue(column.ColumnName)
+                    };
+                    headerRow.AppendChild(cell);
+                }
+                sheetData.AppendChild(headerRow);
+
+                foreach (DataRow row in dataTable.Rows)
+                {
+                    var newRow = new Row();
+                    foreach (DataColumn col in dataTable.Columns)
+                    {
+                        var cell = new Cell
+                        {
+                            DataType = CellValues.String,
+                            CellValue = new CellValue(row[col].ToString())
+                        };
+                        newRow.AppendChild(cell);
+                    }
+
+                    sheetData.AppendChild(newRow);
+                }
+                workbookpart.Workbook.Save();
+                spreadsheetDocument.Save();
+                spreadsheetDocument.Close();
+
+                memoryStream.Seek(0, SeekOrigin.Begin);
+            }
+            catch (Exception e)
+            {
+                context.Logger.Log($"{Constants.FailedExcelConversion} - {e.Message}");
+                context.Logger.Log($"{Constants.Exception2} - {e.InnerException}");
+                context.Logger.Log($"{Constants.Exception3} - {e.StackTrace}");
+            }
+            return memoryStream;
+        }
+
+    }
+}
