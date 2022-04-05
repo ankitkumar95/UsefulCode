@@ -1,0 +1,73 @@
+public async Task<string> GetTokenAsync()
+        {
+            try
+            {
+                String Auth_Flow = "client_credentials";
+                var DecryptedSecretKey = DecodeEnvVar(Client_Secret).Result;
+                String RequestBody = "grant_type=" + Auth_Flow + "&scope=" + Client_Scope;
+                String BasicToken = Convert.ToBase64String(System.Text.ASCIIEncoding.ASCII.GetBytes(ClientId + ":" + DecryptedSecretKey));
+                Byte[] data = Encoding.ASCII.GetBytes(RequestBody);
+                HttpWebRequest req = (HttpWebRequest)HttpWebRequest.Create(Auth_EndPoint);
+                req.Method = "POST";
+                req.ContentType = "application/x-www-form-urlencoded";
+                req.Headers.Add(HttpRequestHeader.Authorization, "Basic " + BasicToken);
+
+                System.IO.Stream requestStream = req.GetRequestStream();
+                requestStream.Write(data, 0, data.Length);
+                requestStream.Close();
+
+                HttpWebResponse HttpResponse = (HttpWebResponse)req.GetResponse();
+                System.IO.Stream responseStream = HttpResponse.GetResponseStream();
+                System.IO.StreamReader streamReader = new System.IO.StreamReader(responseStream, Encoding.Default);
+                String response = streamReader.ReadToEnd();
+
+                streamReader.Close();
+                responseStream.Close();
+                HttpResponse.Close();
+
+                dynamic joResponse = JObject.Parse(response);
+                return joResponse.access_token;
+            }
+            catch (Exception ex)
+            {
+                throw ex;
+            }
+        }
+
+        public static async Task<string> DecodeEnvVar(string envVarName)
+        {
+            try
+            {
+                // Retrieve env var text
+                //var encryptedBase64Text = Environment.GetEnvironmentVariable(envVarName);
+                // Convert base64-encoded text to bytes
+                var encryptedBytes = Convert.FromBase64String(envVarName);
+                // Set up encryption context
+                var encryptionContext = new Dictionary<string, string>();
+                encryptionContext.Add("LambdaFunctionName", Constants.lambdaName);
+                // Construct client
+                using (var client = new AmazonKeyManagementServiceClient())
+                {
+                    // Construct request
+                    var decryptRequest = new DecryptRequest
+                    {
+                        CiphertextBlob = new MemoryStream(encryptedBytes),
+                        EncryptionContext = encryptionContext,
+                    };
+                    // Call KMS to decrypt data
+                    var response = await client.DecryptAsync(decryptRequest);
+                    using (var plaintextStream = response.Plaintext)
+                    {
+                        // Get decrypted bytes
+                        var plaintextBytes = plaintextStream.ToArray();
+                        // Convert decrypted bytes to ASCII text
+                        var plaintext = Encoding.UTF8.GetString(plaintextBytes);
+                        return plaintext;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                throw ex;
+            }
+        }
