@@ -1,0 +1,288 @@
+//Added by Ankit Kumar
+
+using System;
+using System.Configuration;
+using System.Collections.Generic;
+using System.Data;
+using System.Net.Mail;
+using System.Text;
+using System.Threading.Tasks;
+using System.Data.SqlClient;
+using Microsoft.ApplicationBlocks.Data;
+using System.Web;
+using System.IO;
+
+namespace GcpSendEmail
+{
+    public class Gcp
+    {
+        public string requestNumber { get; set; }
+        public string travelDate { get; set; }
+
+        public string emailId { get; set; }
+
+        public string approve { get; set; }
+        public int SLA { get; set; }
+        public string IntlCountryTo { get; set; }
+
+
+        static string etrConnectionString = ConfigurationManager.AppSettings["ETConnectionString"].ToString();
+        static void Main(string[] args)
+        {
+            calculateSlaDate();
+        }
+
+        /// <summary>
+        /// This interacts with DB and create a List 
+        /// The List contains Request Number, Travel Date, Employee EmailId, Approved status 
+        /// </summary>
+        /// <returns></returns>
+        public static List<Gcp> GetListOfGcpRequest()
+        {
+            DataSet dsGcp = new DataSet();
+            List<Gcp> gcpdetails = new List<Gcp>();
+            Gcp objGcp = new Gcp();
+            try
+            {
+                dsGcp = SqlHelper.ExecuteDataset(etrConnectionString, CommandType.StoredProcedure, "spr_GcpUnApprovedRequest");     // Calls the SP
+                foreach (DataRow dr in dsGcp.Tables[0].Rows)    // Loops through the Data Row in the SP
+                {
+                    gcpdetails.Add(new Gcp
+                    {
+                        requestNumber = Convert.ToString(dr["RequestNo"]),
+                        travelDate = Convert.ToString(dr["DateOfTravel"]),
+                        emailId = Convert.ToString(dr["Official_Email_Id"]),
+                        approve = Convert.ToString(dr["Approved"]),
+                        SLA = Convert.ToInt32(dr["GCP_SLA"]),
+                        IntlCountryTo= Convert.ToString(dr["Country"])
+
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                GCPMailerLog("","","", "GetListOfGcpRequest", "error at fetching list from  spr_GcpUnApprovedRequest : " + ex.InnerException);
+            }
+            return gcpdetails;      //returns the complete List
+        }
+        public static void GCPMailerLog(string strTo, string mailBody, string mailsubject,string strLogMethod,string msg)
+        {
+            int tranResult = 0;
+            try
+            {
+                SqlParameter[] param = new SqlParameter[5];
+
+                param[0] = new SqlParameter("@To", strTo);
+                param[1] = new SqlParameter("@Body", mailBody);
+                param[2] = new SqlParameter("@Subject", mailsubject);
+                param[3] = new SqlParameter("@LogMethodName", strLogMethod);
+                param[4] = new SqlParameter("@Message", msg);
+
+                // param[2] = new SqlParameter("@status", "Error");
+
+                tranResult = Convert.ToInt16(SqlHelper.ExecuteScalar(etrConnectionString, CommandType.StoredProcedure,
+                    "SPR_ET_LogGCPSLAMailers", param));
+            }
+            catch (Exception ex)
+            {
+
+            }
+            
+        }
+
+        /// <summary>
+        /// This function Calculates SLA Date based on the SLA provided from DB
+        /// It checks for weekends and skip addition of weekends
+        /// It finally calls the Mail function to send mail
+        /// </summary>
+        public static void calculateSlaDate()
+        {
+            List<Gcp> GcpDetails = GetListOfGcpRequest();
+            try
+            {
+
+                if (GcpDetails.Count > 0)
+                {
+
+                    foreach (Gcp objGcp in GcpDetails)       //Loop to run through the List returned by GetListOfGcpRequest() function
+                    {
+                        int SLA = objGcp.SLA;
+                        int SLACheck = objGcp.SLA;
+                        string CountryTo = objGcp.IntlCountryTo;
+                        string RequestNo = objGcp.requestNumber;  // fetches the row wise Request No
+                        string approve_status = objGcp.approve;    // fetches the row wise Approved Status
+                        string emailid = objGcp.emailId;    // fetches the row wise Employee EmailID
+                        DateTime travelDate = Convert.ToDateTime(objGcp.travelDate);    // fetches the row wise Travel Date
+                        DateTime dummyTravelDateFinal = travelDate;  // Dummy Date vairable taken to use in Loop to iterate
+                        DateTime dummyTravelDate = travelDate;       // Dummy Date vairable taken to use in Loop to iterate
+                        DateTime SlaDate = travelDate;               //This vairable will store the final SLA Date
+
+
+                        if(SLA==1)
+                        {
+                            if((SlaDate == DateTime.Today) && approve_status == "")
+                            {
+                                GcpSendEmail(SlaDate, travelDate, RequestNo, emailid, approve_status, CountryTo);
+                                GcpExpiredRequest(RequestNo);
+                            }
+                        }
+                        else if(SLA>1)
+                        {
+                            //calculate mail send date
+                            while (SLACheck > 0)             //Loop to calculate SLA Date
+                            {
+                                DayOfWeek day = dummyTravelDate.DayOfWeek;
+                                if ((day == DayOfWeek.Saturday) || (day == DayOfWeek.Sunday))       // Checks for the Weekend for the selected Date
+                                {
+                                    dummyTravelDate = dummyTravelDate - TimeSpan.FromDays(1);   //To decrement date by 1 day 
+                                }
+                                else
+                                {
+                                    dummyTravelDateFinal = dummyTravelDate;
+                                    if (SLACheck == 1)             // As soon As SLA becomes 1  
+                                    {
+                                        SlaDate = dummyTravelDateFinal;         // This assigns the SLA Date
+                                    }
+                                    dummyTravelDateFinal = dummyTravelDateFinal - TimeSpan.FromDays(1);      //To decrement date by 1 day 
+                                    dummyTravelDate = dummyTravelDate - TimeSpan.FromDays(1);               //To decrement date by 1 day 
+                                    SLACheck--;    // Decrement SLACheck until it becomes 0                  
+                                }
+                            }
+
+                            DateTime CheckDate = SlaDate.AddDays(1);
+                            //check approve status on sla days from Date of Travel
+                            // Calls the mail function and passes the detail
+                            if ((CheckDate == DateTime.Today) && approve_status == "")
+                            {
+                                //DateTime MailSendDate = SlaDate.AddDays(1);
+                                GcpSendEmail(SlaDate, travelDate, RequestNo, emailid, approve_status, CountryTo);
+                                GcpExpiredRequest(RequestNo);
+                            }
+                        }
+                    }
+                }
+            }
+            catch(Exception ex)
+            {
+                GCPMailerLog("", "", "", "calculateSlaDate", "error at calculateSlaDate " + ex.InnerException);
+
+            }
+          
+            
+        }
+
+        public static void GcpExpiredRequest(string req)
+        {
+            DataSet ds = new DataSet();
+            SqlParameter[] param = new SqlParameter[1];
+            try
+            {
+                param[0] = new SqlParameter("@RequestNo", req);
+                ds=SqlHelper.ExecuteDataset(etrConnectionString, CommandType.StoredProcedure,
+                    "spr_Expired_GCP_Request", param);
+            }
+            catch(Exception ex)
+            {
+                GCPMailerLog("", "", "", "GcpExpiredRequest", " error at fetching expired GCP Request " + ex.InnerException); 
+            }
+        }
+        /// <summary>  
+        /// This is the Main mail body which checks only for SLA-1 Day.
+        /// As the condition is achieved It sends the Mail
+        /// </summary>
+        /// <param name="SlaDate"></param>
+        /// <param name="travelDate"></param>
+        /// <param name="req"></param>
+        /// <param name="emailid"></param>
+        /// <param name="approve"></param>
+        public static void GcpSendEmail(DateTime SlaDate,DateTime travelDate, string requestNo,string emailid,string approve,string Country)
+        {
+
+                MailMessage objMail = new MailMessage();
+                StringBuilder mailBody = new StringBuilder();
+                string strEtravelLogoPath;
+                string DateOfTravel = travelDate.ToString("dd/MM/yyyy");
+                strEtravelLogoPath = ConfigurationManager.AppSettings["ImageFolderPath"] + "etravel_logo.jpg";
+                string baseMessageForEmployee = "<b>Thanks & Regards </b> <br />" +" Business Travel Service <br />" +
+                "Accenture, India <br /><a href=" + ConfigurationManager.AppSettings["url"] + ">" +
+                ConfigurationManager.AppSettings["url"] + "</a><br /><br />" +
+                "<p style='font-size: 7pt;color: #666666' >This is an auto generated mail,please do not reply.</p>";
+
+            //Mail Body creation
+            mailBody.Append("<html><body>");
+            mailBody.Append("<form>");
+            mailBody.Append("<table width='1000' border='1' cellspacing='0' cellpadding='10' style='border-collapse:collapse'>");
+            mailBody.Append("<tr><td align='left' width='1000'>");
+            mailBody.Append("<table width='1000' border='0' cellspacing='0' cellpadding='0' style='font-family: Verdana; font-size: 13px;'>");
+            mailBody.Append("<tr><td valign='top'><img src='" + strEtravelLogoPath + "' width='1000' height='126'>");
+
+            mailBody.Append("<table width='1000' border='0' cellspacing='0' cellpadding='3' style='font-family: Verdana; font-size: 13px;'>");
+            mailBody.Append("<tr><td>&nbsp;</td></tr>");
+            mailBody.Append("<tr><td>&nbsp;</td></tr>");
+            mailBody.Append("<tr><td><tr><td>Dear <b>" + emailid + "</b>,<br /><br /> </td></tr>");
+            mailBody.Append("<tr><td> This is to inform you regarding the travel request  :" + requestNo + "  raised on  "+ DateOfTravel + "  Please note due to no action taken on the request, your GCP E-Travel request is Auto-cancelled.<br /><br /> Kindly reinitiate the request for your GCP travel as the approver will no longer be able to approve the current request. <br /> </tr></td>");
+            mailBody.Append("<tr><td>&nbsp;</td></tr>");
+            mailBody.AppendLine("</table>");
+            mailBody.Append("<p class='verdana'> " + baseMessageForEmployee + "</p>");
+            mailBody.Append("</form>");
+            mailBody.Append("</body></html>");
+
+            //mail sending
+            try
+                {
+                
+
+                string strdomain = ConfigurationManager.AppSettings["MailAddress"].ToString();
+                MailAddress fromAddress = null;
+                string bodyMessage = "";
+                string to = "";
+                string ccMailId = "";
+                ccMailId = ConfigurationManager.AppSettings["GCPHRMail"].Trim();
+                bodyMessage = Convert.ToString(mailBody);
+                string mailSubject = "Your GCP E-travel request raised on " + DateOfTravel + " is Auto-Cancelled for " + Country + ".";
+                 DateTime MailSendDate = SlaDate.AddDays(1);
+                   if ((MailSendDate == DateTime.Today) && approve=="")    //This condition checks for SLA-1 Date from Current Date
+                   {
+                    try
+                    {
+
+                        System.Net.Mail.SmtpClient objSmtpClient = new SmtpClient(ConfigurationManager.AppSettings["SmtpServer"].ToString(),
+                        Convert.ToInt32(ConfigurationManager.AppSettings["SmtpServerPort"]));
+                        objSmtpClient.Host = System.Configuration.ConfigurationManager.AppSettings["SmtpServer"];
+                        objSmtpClient.Timeout = 50000;
+                        objSmtpClient.UseDefaultCredentials = true;
+
+                        fromAddress = new MailAddress(ConfigurationManager.AppSettings["TestMailFrom"].ToString());
+                        to = emailid + strdomain;       //EmployeeID will be added here
+                        //to = "ankit.bj.kumar@accenture.com";
+                        //to = ConfigurationManager.AppSettings["TestMailTo"].Trim();
+
+
+                        objMail.From = fromAddress;
+                        objMail.Subject = mailSubject;
+                        objMail.To.Clear();
+                        objMail.To.Add(to);
+                        objMail.CC.Add(ccMailId);
+                        objMail.Bcc.Clear();
+                        objMail.IsBodyHtml = true;
+                        objMail.Body = bodyMessage;
+                        objSmtpClient.Send(objMail);
+
+                    }
+                    catch (Exception ex)
+                    {
+                        GCPMailerLog(to, bodyMessage, mailSubject, "GcpSendEmail", "error in sending mail if sla condition donot match : " + ex.InnerException);
+                    }
+
+
+
+                }
+
+                }
+                catch (Exception e)
+                {
+                    GCPMailerLog("","", "", "GcpSendEmail", " error in sending mail" + e.InnerException);
+                }
+            }
+        }
+    }
